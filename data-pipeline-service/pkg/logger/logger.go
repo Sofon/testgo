@@ -13,14 +13,14 @@ var (
 	once sync.Once
 )
 
-// Config holds logger configuration
+// Config — конфигурация логгера
 type Config struct {
 	Level      string `json:"level" yaml:"level"`
-	Format     string `json:"format" yaml:"format"` // json or console
+	Format     string `json:"format" yaml:"format"` // json или console
 	OutputPath string `json:"output_path" yaml:"output_path"`
 }
 
-// Init initializes the global logger
+// Init инициализирует глобальный логгер
 func Init(cfg *Config) error {
 	var err error
 	once.Do(func() {
@@ -76,46 +76,46 @@ func initLogger(cfg *Config) error {
 	return nil
 }
 
-// Get returns the global logger instance
+// Get возвращает глобальный экземпляр логгера
 func Get() *zap.Logger {
 	if log == nil {
-		// Initialize with default config if not initialized
+		// Инициализируем с конфигом по умолчанию если не инициализирован
 		_ = Init(&Config{Level: "info", Format: "json"})
 	}
 	return log
 }
 
-// With creates a child logger with additional fields
+// With создаёт дочерний логгер с дополнительными полями
 func With(fields ...zap.Field) *zap.Logger {
 	return Get().With(fields...)
 }
 
-// Info logs an info message
+// Info логирует сообщение уровня info
 func Info(msg string, fields ...zap.Field) {
 	Get().Info(msg, fields...)
 }
 
-// Debug logs a debug message
+// Debug логирует сообщение уровня debug
 func Debug(msg string, fields ...zap.Field) {
 	Get().Debug(msg, fields...)
 }
 
-// Warn logs a warning message
+// Warn логирует сообщение уровня warn
 func Warn(msg string, fields ...zap.Field) {
 	Get().Warn(msg, fields...)
 }
 
-// Error logs an error message
+// Error логирует сообщение уровня error
 func Error(msg string, fields ...zap.Field) {
 	Get().Error(msg, fields...)
 }
 
-// Fatal logs a fatal message and exits
+// Fatal логирует сообщение и завершает программу
 func Fatal(msg string, fields ...zap.Field) {
 	Get().Fatal(msg, fields...)
 }
 
-// Sync flushes any buffered log entries
+// Sync сбрасывает буферизованные записи лога
 func Sync() error {
 	if log != nil {
 		return log.Sync()

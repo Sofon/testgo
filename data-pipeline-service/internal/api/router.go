@@ -11,16 +11,16 @@ import (
 	"go.uber.org/zap"
 )
 
-// ServerConfig holds HTTP server configuration
+// ServerConfig — настройки HTTP сервера
 type ServerConfig struct {
 	Host         string `json:"host" yaml:"host"`
 	Port         int    `json:"port" yaml:"port"`
-	ReadTimeout  int    `json:"read_timeout" yaml:"read_timeout"`   // seconds
-	WriteTimeout int    `json:"write_timeout" yaml:"write_timeout"` // seconds
+	ReadTimeout  int    `json:"read_timeout" yaml:"read_timeout"`   // секунды
+	WriteTimeout int    `json:"write_timeout" yaml:"write_timeout"` // секунды
 	Mode         string `json:"mode" yaml:"mode"`                   // debug, release, test
 }
 
-// Server represents the HTTP server
+// Server — HTTP сервер
 type Server struct {
 	config  *ServerConfig
 	router  *gin.Engine
@@ -28,7 +28,7 @@ type Server struct {
 	handler *Handler
 }
 
-// NewServer creates a new HTTP server
+// NewServer создаёт новый HTTP сервер
 func NewServer(cfg *ServerConfig, service ServiceInterface) *Server {
 	if cfg == nil {
 		cfg = &ServerConfig{
@@ -61,7 +61,7 @@ func NewServer(cfg *ServerConfig, service ServiceInterface) *Server {
 }
 
 func (s *Server) setupRoutes() {
-	// Health/readiness probes
+	// Health/readiness проверки
 	s.router.GET("/health", s.handler.HealthCheck)
 	s.router.GET("/ready", s.handler.ReadinessCheck)
 	s.router.GET("/live", s.handler.LivenessCheck)
@@ -69,20 +69,20 @@ func (s *Server) setupRoutes() {
 	// API v1
 	v1 := s.router.Group("/api/v1")
 	{
-		// Config endpoints
+		// Эндпоинты конфигурации
 		v1.GET("/config", s.handler.GetConfig)
 		v1.PUT("/config", s.handler.UpdateConfig)
 		v1.PATCH("/config", s.handler.PatchConfig)
 
-		// Status endpoint
+		// Эндпоинт статуса
 		v1.GET("/status", s.handler.GetStatus)
 
-		// Control endpoints
+		// Эндпоинты управления
 		v1.POST("/reload", s.handler.Reload)
 	}
 }
 
-// Start starts the HTTP server
+// Start запускает HTTP сервер
 func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
 
@@ -93,25 +93,25 @@ func (s *Server) Start() error {
 		WriteTimeout: time.Duration(s.config.WriteTimeout) * time.Second,
 	}
 
-	logger.Info("starting HTTP server", zap.String("address", addr))
+	logger.Info("запуск HTTP сервера", zap.String("address", addr))
 
 	if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("failed to start HTTP server: %w", err)
+		return fmt.Errorf("ошибка запуска HTTP сервера: %w", err)
 	}
 
 	return nil
 }
 
-// Shutdown gracefully shuts down the server
+// Shutdown выполняет graceful остановку сервера
 func (s *Server) Shutdown(ctx context.Context) error {
 	if s.server != nil {
-		logger.Info("shutting down HTTP server")
+		logger.Info("остановка HTTP сервера")
 		return s.server.Shutdown(ctx)
 	}
 	return nil
 }
 
-// RequestLogger returns a middleware that logs requests
+// RequestLogger — middleware для логирования запросов
 func RequestLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -122,7 +122,7 @@ func RequestLogger() gin.HandlerFunc {
 		latency := time.Since(start)
 		status := c.Writer.Status()
 
-		logger.Debug("http request",
+		logger.Debug("http запрос",
 			zap.String("method", c.Request.Method),
 			zap.String("path", path),
 			zap.Int("status", status),
@@ -132,7 +132,7 @@ func RequestLogger() gin.HandlerFunc {
 	}
 }
 
-// CORS returns a middleware that handles CORS
+// CORS — middleware для обработки CORS
 func CORS() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")

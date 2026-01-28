@@ -14,7 +14,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// Writer handles writing data to QuestDB
+// Writer — обработчик записи данных в QuestDB
 type Writer struct {
 	sender        *qdb.LineSender
 	config        *models.QuestDBConfig
@@ -28,10 +28,10 @@ type Writer struct {
 	stopChan      chan struct{}
 }
 
-// NewWriter creates a new QuestDB writer
+// NewWriter создаёт новый QuestDB writer
 func NewWriter(config *models.QuestDBConfig) (*Writer, error) {
 	if config == nil {
-		return nil, fmt.Errorf("QuestDB config is required")
+		return nil, fmt.Errorf("требуется конфигурация QuestDB")
 	}
 
 	return &Writer{
@@ -40,7 +40,7 @@ func NewWriter(config *models.QuestDBConfig) (*Writer, error) {
 	}, nil
 }
 
-// Connect establishes connection to QuestDB
+// Connect устанавливает подключение к QuestDB
 func (w *Writer) Connect(ctx context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -61,18 +61,18 @@ func (w *Writer) Connect(ctx context.Context) error {
 
 	sender, err := qdb.NewLineSender(ctx, opts...)
 	if err != nil {
-		return fmt.Errorf("failed to create QuestDB sender: %w", err)
+		return fmt.Errorf("ошибка создания QuestDB sender: %w", err)
 	}
 
 	w.sender = sender
 	w.connected.Store(true)
 
-	logger.Info("connected to QuestDB",
+	logger.Info("подключено к QuestDB",
 		zap.String("host", w.config.Host),
 		zap.Int("port", w.config.ILPPort),
 	)
 
-	// Start auto-flush goroutine
+	// Запускаем горутину авто-flush
 	w.startAutoFlush()
 
 	return nil
@@ -90,7 +90,7 @@ func (w *Writer) startAutoFlush() {
 			select {
 			case <-w.flushTicker.C:
 				if err := w.Flush(context.Background()); err != nil {
-					logger.Warn("auto-flush failed", zap.Error(err))
+					logger.Warn("ошибка авто-flush", zap.Error(err))
 				}
 			case <-w.stopChan:
 				return
@@ -99,14 +99,14 @@ func (w *Writer) startAutoFlush() {
 	}()
 }
 
-// Write writes a row to QuestDB
+// Write записывает строку в QuestDB
 func (w *Writer) Write(ctx context.Context, row *models.QuestDBRow) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	if !w.connected.Load() || w.sender == nil {
 		w.writeErrors.Add(1)
-		return fmt.Errorf("not connected to QuestDB")
+		return fmt.Errorf("нет подключения к QuestDB")
 	}
 
 	tableName := row.TableName
@@ -114,15 +114,15 @@ func (w *Writer) Write(ctx context.Context, row *models.QuestDBRow) error {
 		tableName = w.config.TableName
 	}
 
-	// Start building the row
+	// Начинаем построение строки
 	w.sender.Table(tableName)
 
-	// Add symbol (partition key)
+	// Добавляем symbol (ключ партиции)
 	if row.Symbol != "" {
 		w.sender.Symbol("symbol", row.Symbol)
 	}
 
-	// Add columns
+	// Добавляем колонки
 	for key, value := range row.Columns {
 		switch v := value.(type) {
 		case string:
@@ -144,7 +144,7 @@ func (w *Writer) Write(ctx context.Context, row *models.QuestDBRow) error {
 		}
 	}
 
-	// Set timestamp
+	// Устанавливаем timestamp
 	ts := row.Timestamp
 	if ts.IsZero() {
 		ts = time.Now()
@@ -152,12 +152,12 @@ func (w *Writer) Write(ctx context.Context, row *models.QuestDBRow) error {
 
 	if err := w.sender.At(ctx, ts); err != nil {
 		w.writeErrors.Add(1)
-		return fmt.Errorf("failed to write row: %w", err)
+		return fmt.Errorf("ошибка записи строки: %w", err)
 	}
 
 	w.pendingRows.Add(1)
 
-	// Auto-flush if batch size reached
+	// Авто-flush при достижении размера батча
 	if w.config.BatchSize > 0 && w.pendingRows.Load() >= int64(w.config.BatchSize) {
 		return w.flushUnsafe(ctx)
 	}
@@ -165,7 +165,7 @@ func (w *Writer) Write(ctx context.Context, row *models.QuestDBRow) error {
 	return nil
 }
 
-// WriteRow writes a row using field mappings from config
+// WriteRow записывает строку используя маппинг полей из конфига
 func (w *Writer) WriteRow(ctx context.Context, data map[string]interface{}, mappings []models.FieldMap, tableName, timestampField, symbolField string) error {
 	row := &models.QuestDBRow{
 		TableName: tableName,
@@ -173,26 +173,26 @@ func (w *Writer) WriteRow(ctx context.Context, data map[string]interface{}, mapp
 		Timestamp: time.Now(),
 	}
 
-	// Extract symbol
+	// Извлекаем symbol
 	if symbolField != "" {
 		if sym, ok := data[symbolField]; ok {
 			row.Symbol = fmt.Sprintf("%v", sym)
 		}
 	}
 
-	// Extract timestamp
+	// Извлекаем timestamp
 	if timestampField != "" {
 		if ts, ok := data[timestampField]; ok {
 			row.Timestamp = parseTimestamp(ts)
 		}
 	}
 
-	// Map fields
+	// Маппим поля
 	for _, mapping := range mappings {
 		val, exists := data[mapping.Source]
 		if !exists {
 			if mapping.Required {
-				return fmt.Errorf("required field %s not found", mapping.Source)
+				return fmt.Errorf("обязательное поле %s не найдено", mapping.Source)
 			}
 			if mapping.DefaultVal != "" {
 				val = mapping.DefaultVal
@@ -201,16 +201,16 @@ func (w *Writer) WriteRow(ctx context.Context, data map[string]interface{}, mapp
 			}
 		}
 
-		// Skip symbol and timestamp as they're handled separately
+		// Пропускаем symbol и timestamp — они обрабатываются отдельно
 		if mapping.Source == symbolField || mapping.Source == timestampField {
 			continue
 		}
 
-		// Convert to target type
+		// Конвертируем в целевой тип
 		converted, err := convertValue(val, mapping.Type)
 		if err != nil {
 			if mapping.Required {
-				return fmt.Errorf("failed to convert field %s: %w", mapping.Source, err)
+				return fmt.Errorf("ошибка конвертации поля %s: %w", mapping.Source, err)
 			}
 			continue
 		}
@@ -226,12 +226,12 @@ func parseTimestamp(val interface{}) time.Time {
 	case time.Time:
 		return v
 	case int64:
-		// Assume milliseconds
+		// Предполагаем миллисекунды
 		return time.UnixMilli(v)
 	case float64:
 		return time.UnixMilli(int64(v))
 	case string:
-		// Try various formats
+		// Пробуем разные форматы
 		formats := []string{
 			time.RFC3339,
 			time.RFC3339Nano,
@@ -296,7 +296,7 @@ func convertValue(val interface{}, targetType string) (interface{}, error) {
 	return val, nil
 }
 
-// Flush sends all pending rows to QuestDB
+// Flush отправляет все ожидающие строки в QuestDB
 func (w *Writer) Flush(ctx context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -315,19 +315,19 @@ func (w *Writer) flushUnsafe(ctx context.Context) error {
 
 	if err := w.sender.Flush(ctx); err != nil {
 		w.writeErrors.Add(1)
-		return fmt.Errorf("failed to flush: %w", err)
+		return fmt.Errorf("ошибка flush: %w", err)
 	}
 
 	w.rowsWritten.Add(pending)
 	w.pendingRows.Store(0)
 	w.lastWriteAt.Store(time.Now())
 
-	logger.Debug("flushed rows to QuestDB", zap.Int64("rows", pending))
+	logger.Debug("строки отправлены в QuestDB", zap.Int64("rows", pending))
 
 	return nil
 }
 
-// Close closes the connection to QuestDB
+// Close закрывает подключение к QuestDB
 func (w *Writer) Close(ctx context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -338,26 +338,26 @@ func (w *Writer) Close(ctx context.Context) error {
 	close(w.stopChan)
 
 	if w.sender != nil {
-		// Flush remaining data
+		// Отправляем оставшиеся данные
 		if err := w.sender.Flush(ctx); err != nil {
-			logger.Warn("failed to flush on close", zap.Error(err))
+			logger.Warn("ошибка flush при закрытии", zap.Error(err))
 		}
 		if err := w.sender.Close(ctx); err != nil {
-			return fmt.Errorf("failed to close QuestDB connection: %w", err)
+			return fmt.Errorf("ошибка закрытия соединения с QuestDB: %w", err)
 		}
 		w.connected.Store(false)
-		logger.Info("closed QuestDB connection")
+		logger.Info("соединение с QuestDB закрыто")
 	}
 
 	return nil
 }
 
-// IsConnected returns the connection status
+// IsConnected возвращает статус подключения
 func (w *Writer) IsConnected() bool {
 	return w.connected.Load()
 }
 
-// GetStatus returns the QuestDB writer status
+// GetStatus возвращает статус QuestDB writer
 func (w *Writer) GetStatus() models.QuestDBStatus {
 	status := models.QuestDBStatus{
 		Connected:   w.connected.Load(),
@@ -375,7 +375,7 @@ func (w *Writer) GetStatus() models.QuestDBStatus {
 	return status
 }
 
-// HealthCheck performs a health check on QuestDB
+// HealthCheck выполняет проверку здоровья QuestDB
 func (w *Writer) HealthCheck(ctx context.Context) error {
 	if w.config.HTTPPort == 0 {
 		return nil
@@ -396,13 +396,13 @@ func (w *Writer) HealthCheck(ctx context.Context) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("health check failed with status: %d", resp.StatusCode)
+		return fmt.Errorf("health check не прошёл, статус: %d", resp.StatusCode)
 	}
 
 	return nil
 }
 
-// ResetStats resets write counters
+// ResetStats сбрасывает счётчики записи
 func (w *Writer) ResetStats() {
 	w.rowsWritten.Store(0)
 	w.writeErrors.Store(0)

@@ -17,91 +17,91 @@ import (
 )
 
 func main() {
-	// Parse flags
-	configPath := flag.String("config", "", "Path to config file")
+	// Парсим флаги
+	configPath := flag.String("config", "", "Путь к файлу конфигурации")
 	flag.Parse()
 
-	// Load application config
+	// Загружаем конфигурацию приложения
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		panic("failed to load config: " + err.Error())
+		panic("ошибка загрузки конфига: " + err.Error())
 	}
 
-	// Validate config
+	// Валидируем конфигурацию
 	if err := cfg.Validate(); err != nil {
-		panic("invalid config: " + err.Error())
+		panic("неверная конфигурация: " + err.Error())
 	}
 
-	// Initialize logger
+	// Инициализируем логгер
 	if err := logger.Init(&cfg.Logger); err != nil {
-		panic("failed to initialize logger: " + err.Error())
+		panic("ошибка инициализации логгера: " + err.Error())
 	}
 	defer logger.Sync()
 
-	logger.Info("starting data pipeline service",
+	logger.Info("запуск сервиса обработки данных",
 		zap.String("version", service.Version),
 	)
 
-	// Create context with cancellation
+	// Создаём контекст с отменой
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Initialize storage
+	// Инициализируем хранилище
 	store, err := storage.NewHybridStorage(&cfg.MongoDB, &cfg.File)
 	if err != nil {
-		logger.Fatal("failed to create storage", zap.Error(err))
+		logger.Fatal("ошибка создания хранилища", zap.Error(err))
 	}
 
-	// Connect to MongoDB
+	// Подключаемся к MongoDB
 	if err := store.Connect(ctx); err != nil {
-		logger.Warn("MongoDB connection failed, using file storage", zap.Error(err))
+		logger.Warn("подключение к MongoDB не удалось, используется файловое хранилище", zap.Error(err))
 	}
 	defer store.Disconnect(context.Background())
 
-	// Create service
+	// Создаём сервис
 	svc := service.NewService(store)
 
-	// Start service
+	// Запускаем сервис
 	if err := svc.Start(ctx); err != nil {
-		logger.Fatal("failed to start service", zap.Error(err))
+		logger.Fatal("ошибка запуска сервиса", zap.Error(err))
 	}
 
-	// Create and start HTTP server
+	// Создаём и запускаем HTTP сервер
 	server := api.NewServer(&cfg.Server, svc)
 
-	// Start server in goroutine
+	// Запускаем сервер в горутине
 	go func() {
 		if err := server.Start(); err != nil {
-			logger.Error("HTTP server error", zap.Error(err))
+			logger.Error("ошибка HTTP сервера", zap.Error(err))
 			cancel()
 		}
 	}()
 
-	logger.Info("service started successfully",
+	logger.Info("сервис успешно запущен",
 		zap.String("http_address", cfg.Server.Host),
 		zap.Int("http_port", cfg.Server.Port),
 	)
 
-	// Wait for shutdown signal
+	// Ожидаем сигнал завершения
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	<-sigChan
-	logger.Info("received shutdown signal")
+	logger.Info("получен сигнал завершения")
 
 	// Graceful shutdown
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
-	// Stop HTTP server
+	// Останавливаем HTTP сервер
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Error("HTTP server shutdown error", zap.Error(err))
+		logger.Error("ошибка остановки HTTP сервера", zap.Error(err))
 	}
 
-	// Stop service
+	// Останавливаем сервис
 	if err := svc.Stop(shutdownCtx); err != nil {
-		logger.Error("service shutdown error", zap.Error(err))
+		logger.Error("ошибка остановки сервиса", zap.Error(err))
 	}
 
-	logger.Info("shutdown complete")
+	logger.Info("завершение работы")
 }

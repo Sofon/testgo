@@ -2,7 +2,7 @@ package models
 
 import "time"
 
-// ServiceStatus represents the current status of the service
+// ServiceStatus — текущий статус сервиса
 type ServiceStatus struct {
 	Status      string            `json:"status"` // running, stopped, error
 	StartedAt   time.Time         `json:"started_at"`
@@ -15,7 +15,7 @@ type ServiceStatus struct {
 	BuildTime   string            `json:"build_time,omitempty"`
 }
 
-// MQTTStatus represents MQTT connection status
+// MQTTStatus — статус подключения к MQTT
 type MQTTStatus struct {
 	Connected        bool      `json:"connected"`
 	Broker           string    `json:"broker"`
@@ -25,7 +25,7 @@ type MQTTStatus struct {
 	Errors           int64     `json:"errors"`
 }
 
-// QuestDBStatus represents QuestDB connection status
+// QuestDBStatus — статус подключения к QuestDB
 type QuestDBStatus struct {
 	Connected       bool      `json:"connected"`
 	Host            string    `json:"host"`
@@ -36,17 +36,17 @@ type QuestDBStatus struct {
 	PendingRows     int64     `json:"pending_rows"`
 }
 
-// MongoDBStatus represents MongoDB connection status
+// MongoDBStatus — статус подключения к MongoDB
 type MongoDBStatus struct {
 	Connected bool   `json:"connected"`
 	Host      string `json:"host"`
 	Database  string `json:"database"`
 }
 
-// PipelineStatus represents data pipeline status
+// PipelineStatus — статус пайплайна обработки данных
 type PipelineStatus struct {
 	Running           bool    `json:"running"`
-	BufferUsage       int     `json:"buffer_usage"`       // percentage
+	BufferUsage       int     `json:"buffer_usage"`       // процент заполнения
 	BufferCapacity    int     `json:"buffer_capacity"`
 	ProcessedMessages int64   `json:"processed_messages"`
 	FailedMessages    int64   `json:"failed_messages"`
@@ -54,7 +54,7 @@ type PipelineStatus struct {
 	ActiveWorkers     int     `json:"active_workers"`
 }
 
-// HealthCheck represents a simple health check response
+// HealthCheck — ответ на health-проверку
 type HealthCheck struct {
 	Status    string    `json:"status"`
 	Timestamp time.Time `json:"timestamp"`

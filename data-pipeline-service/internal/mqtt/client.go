@@ -17,10 +17,10 @@ import (
 	"go.uber.org/zap"
 )
 
-// MessageHandler is a function that processes incoming MQTT messages
+// MessageHandler — функция обработки входящих MQTT сообщений
 type MessageHandler func(msg *models.IncomingMessage)
 
-// Client wraps the MQTT client with additional functionality
+// Client — обёртка над MQTT клиентом с дополнительной функциональностью
 type Client struct {
 	client           pahomqtt.Client
 	config           *models.MQTTConfig
@@ -33,13 +33,13 @@ type Client struct {
 	subscribedTopics []string
 }
 
-// NewClient creates a new MQTT client
+// NewClient создаёт новый MQTT клиент
 func NewClient(config *models.MQTTConfig, handler MessageHandler) (*Client, error) {
 	if config == nil {
-		return nil, fmt.Errorf("MQTT config is required")
+		return nil, fmt.Errorf("требуется конфигурация MQTT")
 	}
 	if handler == nil {
-		return nil, fmt.Errorf("message handler is required")
+		return nil, fmt.Errorf("требуется обработчик сообщений")
 	}
 
 	c := &Client{
@@ -60,7 +60,7 @@ func NewClient(config *models.MQTTConfig, handler MessageHandler) (*Client, erro
 func (c *Client) buildClientOptions() (*pahomqtt.ClientOptions, error) {
 	opts := pahomqtt.NewClientOptions()
 
-	// Build broker URL
+	// Формируем URL брокера
 	scheme := "tcp"
 	if c.config.UseTLS {
 		scheme = "ssl"
@@ -84,21 +84,21 @@ func (c *Client) buildClientOptions() (*pahomqtt.ClientOptions, error) {
 		opts.SetPassword(c.config.Password)
 	}
 
-	// TLS configuration
+	// Настройка TLS
 	if c.config.UseTLS {
 		tlsConfig, err := c.buildTLSConfig()
 		if err != nil {
-			return nil, fmt.Errorf("failed to build TLS config: %w", err)
+			return nil, fmt.Errorf("ошибка создания TLS конфига: %w", err)
 		}
 		opts.SetTLSConfig(tlsConfig)
 	}
 
-	// Callbacks
+	// Колбэки
 	opts.SetOnConnectHandler(c.onConnect)
 	opts.SetConnectionLostHandler(c.onConnectionLost)
 	opts.SetReconnectingHandler(c.onReconnecting)
 
-	// Default message handler
+	// Обработчик сообщений по умолчанию
 	opts.SetDefaultPublishHandler(c.onMessage)
 
 	return opts, nil
@@ -109,22 +109,22 @@ func (c *Client) buildTLSConfig() (*tls.Config, error) {
 		MinVersion: tls.VersionTLS12,
 	}
 
-	// Load CA cert if provided
+	// Загружаем CA сертификат если указан
 	if c.config.TLSCAPath != "" {
 		caCert, err := os.ReadFile(c.config.TLSCAPath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read CA cert: %w", err)
+			return nil, fmt.Errorf("ошибка чтения CA сертификата: %w", err)
 		}
 		caCertPool := x509.NewCertPool()
 		caCertPool.AppendCertsFromPEM(caCert)
 		tlsConfig.RootCAs = caCertPool
 	}
 
-	// Load client cert if provided
+	// Загружаем клиентский сертификат если указан
 	if c.config.TLSCertPath != "" && c.config.TLSKeyPath != "" {
 		cert, err := tls.LoadX509KeyPair(c.config.TLSCertPath, c.config.TLSKeyPath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load client cert: %w", err)
+			return nil, fmt.Errorf("ошибка загрузки клиентского сертификата: %w", err)
 		}
 		tlsConfig.Certificates = []tls.Certificate{cert}
 	}
@@ -134,26 +134,26 @@ func (c *Client) buildTLSConfig() (*tls.Config, error) {
 
 func (c *Client) onConnect(client pahomqtt.Client) {
 	c.connected.Store(true)
-	logger.Info("connected to MQTT broker",
+	logger.Info("подключено к MQTT брокеру",
 		zap.String("broker", c.config.Broker),
 		zap.Int("port", c.config.Port),
 	)
 
-	// Subscribe to topics
+	// Подписываемся на топики
 	c.subscribeToTopics()
 }
 
 func (c *Client) onConnectionLost(client pahomqtt.Client, err error) {
 	c.connected.Store(false)
 	c.errors.Add(1)
-	logger.Error("MQTT connection lost",
+	logger.Error("потеряно соединение с MQTT",
 		zap.Error(err),
 		zap.String("broker", c.config.Broker),
 	)
 }
 
 func (c *Client) onReconnecting(client pahomqtt.Client, opts *pahomqtt.ClientOptions) {
-	logger.Info("reconnecting to MQTT broker",
+	logger.Info("переподключение к MQTT брокеру",
 		zap.String("broker", c.config.Broker),
 	)
 }
@@ -171,13 +171,13 @@ func (c *Client) onMessage(client pahomqtt.Client, msg pahomqtt.Message) {
 		MessageID:  msg.MessageID(),
 	}
 
-	// Try to parse as JSON
+	// Пробуем распарсить как JSON
 	var data map[string]interface{}
 	if err := json.Unmarshal(msg.Payload(), &data); err == nil {
 		incoming.ParsedData = data
 	}
 
-	// Call handler
+	// Вызываем обработчик
 	c.handler(incoming)
 }
 
@@ -192,7 +192,7 @@ func (c *Client) subscribeToTopics() {
 
 	token := c.client.SubscribeMultiple(filters, nil)
 	if token.Wait() && token.Error() != nil {
-		logger.Error("failed to subscribe to topics",
+		logger.Error("ошибка подписки на топики",
 			zap.Error(token.Error()),
 			zap.Strings("topics", c.config.Topics),
 		)
@@ -201,13 +201,13 @@ func (c *Client) subscribeToTopics() {
 	}
 
 	c.subscribedTopics = c.config.Topics
-	logger.Info("subscribed to topics",
+	logger.Info("подписка на топики выполнена",
 		zap.Strings("topics", c.config.Topics),
 		zap.Int("qos", c.config.QoS),
 	)
 }
 
-// Connect establishes connection to the MQTT broker
+// Connect устанавливает подключение к MQTT брокеру
 func (c *Client) Connect(ctx context.Context) error {
 	token := c.client.Connect()
 
@@ -216,28 +216,28 @@ func (c *Client) Connect(ctx context.Context) error {
 		return ctx.Err()
 	case <-token.Done():
 		if token.Error() != nil {
-			return fmt.Errorf("failed to connect to MQTT broker: %w", token.Error())
+			return fmt.Errorf("ошибка подключения к MQTT брокеру: %w", token.Error())
 		}
 	}
 
 	return nil
 }
 
-// Disconnect closes the MQTT connection
+// Disconnect закрывает соединение с MQTT
 func (c *Client) Disconnect() {
 	if c.client != nil && c.client.IsConnected() {
-		c.client.Disconnect(1000) // Wait 1 second for graceful disconnect
+		c.client.Disconnect(1000) // Ждём 1 секунду для graceful отключения
 		c.connected.Store(false)
-		logger.Info("disconnected from MQTT broker")
+		logger.Info("отключено от MQTT брокера")
 	}
 }
 
-// IsConnected returns the connection status
+// IsConnected возвращает статус подключения
 func (c *Client) IsConnected() bool {
 	return c.connected.Load()
 }
 
-// GetStatus returns the MQTT client status
+// GetStatus возвращает статус MQTT клиента
 func (c *Client) GetStatus() models.MQTTStatus {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -257,13 +257,13 @@ func (c *Client) GetStatus() models.MQTTStatus {
 	return status
 }
 
-// UpdateConfig updates the MQTT configuration
-// This will disconnect and reconnect with new settings
+// UpdateConfig обновляет конфигурацию MQTT.
+// Отключается и переподключается с новыми настройками.
 func (c *Client) UpdateConfig(ctx context.Context, config *models.MQTTConfig) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Disconnect existing connection
+	// Отключаем текущее соединение
 	if c.client != nil && c.client.IsConnected() {
 		c.client.Disconnect(1000)
 	}
@@ -277,21 +277,21 @@ func (c *Client) UpdateConfig(ctx context.Context, config *models.MQTTConfig) er
 
 	c.client = pahomqtt.NewClient(opts)
 
-	// Reconnect
+	// Переподключаемся
 	token := c.client.Connect()
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-token.Done():
 		if token.Error() != nil {
-			return fmt.Errorf("failed to reconnect: %w", token.Error())
+			return fmt.Errorf("ошибка переподключения: %w", token.Error())
 		}
 	}
 
 	return nil
 }
 
-// Unsubscribe removes subscriptions from topics
+// Unsubscribe отписывается от топиков
 func (c *Client) Unsubscribe(topics []string) error {
 	token := c.client.Unsubscribe(topics...)
 	if token.Wait() && token.Error() != nil {
@@ -300,7 +300,7 @@ func (c *Client) Unsubscribe(topics []string) error {
 	return nil
 }
 
-// ResetStats resets message counters
+// ResetStats сбрасывает счётчики сообщений
 func (c *Client) ResetStats() {
 	c.messagesReceived.Store(0)
 	c.errors.Store(0)

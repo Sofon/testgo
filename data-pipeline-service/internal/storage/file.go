@@ -15,27 +15,27 @@ import (
 	"go.uber.org/zap"
 )
 
-// FileStorage provides file-based configuration storage as fallback
+// FileStorage — файловое хранилище конфигурации (fallback)
 type FileStorage struct {
 	filePath string
 	mu       sync.RWMutex
 }
 
-// FileConfig holds file storage settings
+// FileConfig — настройки файлового хранилища
 type FileConfig struct {
 	Path string `json:"path" yaml:"path"`
 }
 
-// NewFileStorage creates a new file-based storage
+// NewFileStorage создаёт новое файловое хранилище
 func NewFileStorage(cfg *FileConfig) (*FileStorage, error) {
 	if cfg == nil || cfg.Path == "" {
 		cfg = &FileConfig{Path: "./config/pipeline-config.json"}
 	}
 
-	// Ensure directory exists
+	// Создаём директорию если не существует
 	dir := filepath.Dir(cfg.Path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create config directory: %w", err)
+		return nil, fmt.Errorf("ошибка создания директории конфига: %w", err)
 	}
 
 	return &FileStorage{
@@ -43,7 +43,7 @@ func NewFileStorage(cfg *FileConfig) (*FileStorage, error) {
 	}, nil
 }
 
-// GetConfig reads configuration from file
+// GetConfig читает конфигурацию из файла
 func (s *FileStorage) GetConfig(ctx context.Context) (*models.Config, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -53,18 +53,18 @@ func (s *FileStorage) GetConfig(ctx context.Context) (*models.Config, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, ErrConfigNotFound
 		}
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+		return nil, fmt.Errorf("ошибка чтения файла конфига: %w", err)
 	}
 
 	var config models.Config
 	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+		return nil, fmt.Errorf("ошибка парсинга файла конфига: %w", err)
 	}
 
 	return &config, nil
 }
 
-// SaveConfig writes configuration to file
+// SaveConfig записывает конфигурацию в файл
 func (s *FileStorage) SaveConfig(ctx context.Context, config *models.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -74,7 +74,7 @@ func (s *FileStorage) SaveConfig(ctx context.Context, config *models.Config) err
 		config.CreatedAt = config.UpdatedAt
 	}
 
-	// Read current version if exists
+	// Читаем текущую версию если файл существует
 	if data, err := os.ReadFile(s.filePath); err == nil {
 		var current models.Config
 		if json.Unmarshal(data, &current) == nil {
@@ -86,22 +86,22 @@ func (s *FileStorage) SaveConfig(ctx context.Context, config *models.Config) err
 
 	data, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
+		return fmt.Errorf("ошибка сериализации конфига: %w", err)
 	}
 
-	// Write to temp file first
+	// Сначала пишем во временный файл
 	tmpPath := s.filePath + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return fmt.Errorf("failed to write temp config file: %w", err)
+		return fmt.Errorf("ошибка записи временного файла конфига: %w", err)
 	}
 
-	// Atomic rename
+	// Атомарное переименование
 	if err := os.Rename(tmpPath, s.filePath); err != nil {
 		os.Remove(tmpPath)
-		return fmt.Errorf("failed to rename config file: %w", err)
+		return fmt.Errorf("ошибка переименования файла конфига: %w", err)
 	}
 
-	logger.Info("config saved to file",
+	logger.Info("конфиг сохранён в файл",
 		zap.String("path", s.filePath),
 		zap.Int("version", config.Version),
 	)
@@ -109,12 +109,12 @@ func (s *FileStorage) SaveConfig(ctx context.Context, config *models.Config) err
 	return nil
 }
 
-// UpdateConfig updates specific fields of the configuration
+// UpdateConfig обновляет отдельные поля конфигурации
 func (s *FileStorage) UpdateConfig(ctx context.Context, update *models.ConfigUpdate) (*models.Config, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Read current config
+	// Читаем текущий конфиг
 	var config *models.Config
 
 	data, err := os.ReadFile(s.filePath)
@@ -122,16 +122,16 @@ func (s *FileStorage) UpdateConfig(ctx context.Context, update *models.ConfigUpd
 		if errors.Is(err, os.ErrNotExist) {
 			config = models.DefaultConfig()
 		} else {
-			return nil, fmt.Errorf("failed to read config file: %w", err)
+			return nil, fmt.Errorf("ошибка чтения файла конфига: %w", err)
 		}
 	} else {
 		config = &models.Config{}
 		if err := json.Unmarshal(data, config); err != nil {
-			return nil, fmt.Errorf("failed to parse config file: %w", err)
+			return nil, fmt.Errorf("ошибка парсинга файла конфига: %w", err)
 		}
 	}
 
-	// Apply updates
+	// Применяем обновления
 	if update.MQTT != nil {
 		config.MQTT = *update.MQTT
 	}
@@ -145,23 +145,23 @@ func (s *FileStorage) UpdateConfig(ctx context.Context, update *models.ConfigUpd
 	config.Version++
 	config.UpdatedAt = time.Now()
 
-	// Save updated config
+	// Сохраняем обновлённый конфиг
 	newData, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal config: %w", err)
+		return nil, fmt.Errorf("ошибка сериализации конфига: %w", err)
 	}
 
 	tmpPath := s.filePath + ".tmp"
 	if err := os.WriteFile(tmpPath, newData, 0644); err != nil {
-		return nil, fmt.Errorf("failed to write temp config file: %w", err)
+		return nil, fmt.Errorf("ошибка записи временного файла конфига: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, s.filePath); err != nil {
 		os.Remove(tmpPath)
-		return nil, fmt.Errorf("failed to rename config file: %w", err)
+		return nil, fmt.Errorf("ошибка переименования файла конфига: %w", err)
 	}
 
-	logger.Info("config updated in file",
+	logger.Info("конфиг обновлён в файле",
 		zap.String("path", s.filePath),
 		zap.Int("version", config.Version),
 	)
@@ -169,7 +169,7 @@ func (s *FileStorage) UpdateConfig(ctx context.Context, update *models.ConfigUpd
 	return config, nil
 }
 
-// Exists checks if config file exists
+// Exists проверяет существование файла конфига
 func (s *FileStorage) Exists() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -178,7 +178,7 @@ func (s *FileStorage) Exists() bool {
 	return err == nil
 }
 
-// GetPath returns the config file path
+// GetPath возвращает путь к файлу конфига
 func (s *FileStorage) GetPath() string {
 	return s.filePath
 }

@@ -2,7 +2,7 @@ package models
 
 import "time"
 
-// IncomingMessage represents a message received from MQTT
+// IncomingMessage — входящее сообщение из MQTT
 type IncomingMessage struct {
 	Topic       string                 `json:"topic"`
 	Payload     []byte                 `json:"-"`
@@ -13,7 +13,7 @@ type IncomingMessage struct {
 	MessageID   uint16                 `json:"message_id"`
 }
 
-// QuestDBRow represents a row to be written to QuestDB
+// QuestDBRow — строка для записи в QuestDB
 type QuestDBRow struct {
 	TableName  string
 	Symbol     string

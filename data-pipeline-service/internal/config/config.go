@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// AppConfig holds the application configuration
+// AppConfig — конфигурация приложения
 type AppConfig struct {
 	Server  api.ServerConfig     `json:"server" yaml:"server"`
 	MongoDB storage.MongoConfig  `json:"mongodb" yaml:"mongodb"`
@@ -19,24 +19,24 @@ type AppConfig struct {
 	Logger  logger.Config        `json:"logger" yaml:"logger"`
 }
 
-// Load loads configuration from file and environment
+// Load загружает конфигурацию из файла и переменных окружения
 func Load(configPath string) (*AppConfig, error) {
 	cfg := DefaultConfig()
 
-	// Load from file if exists
+	// Загружаем из файла если существует
 	if configPath != "" {
 		if err := cfg.loadFromFile(configPath); err != nil {
 			return nil, err
 		}
 	}
 
-	// Override with environment variables
+	// Переопределяем переменными окружения
 	cfg.loadFromEnv()
 
 	return cfg, nil
 }
 
-// DefaultConfig returns default configuration
+// DefaultConfig возвращает конфигурацию по умолчанию
 func DefaultConfig() *AppConfig {
 	return &AppConfig{
 		Server: api.ServerConfig{
@@ -67,20 +67,20 @@ func (c *AppConfig) loadFromFile(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil // File doesn't exist, use defaults
+			return nil // Файл не существует, используем значения по умолчанию
 		}
-		return fmt.Errorf("failed to read config file: %w", err)
+		return fmt.Errorf("ошибка чтения файла конфига: %w", err)
 	}
 
 	if err := yaml.Unmarshal(data, c); err != nil {
-		return fmt.Errorf("failed to parse config file: %w", err)
+		return fmt.Errorf("ошибка парсинга файла конфига: %w", err)
 	}
 
 	return nil
 }
 
 func (c *AppConfig) loadFromEnv() {
-	// Server
+	// Сервер
 	if v := os.Getenv("SERVER_HOST"); v != "" {
 		c.Server.Host = v
 	}
@@ -104,12 +104,12 @@ func (c *AppConfig) loadFromEnv() {
 		c.MongoDB.Collection = v
 	}
 
-	// File storage
+	// Файловое хранилище
 	if v := os.Getenv("CONFIG_FILE_PATH"); v != "" {
 		c.File.Path = v
 	}
 
-	// Logger
+	// Логгер
 	if v := os.Getenv("LOG_LEVEL"); v != "" {
 		c.Logger.Level = v
 	}
@@ -118,10 +118,10 @@ func (c *AppConfig) loadFromEnv() {
 	}
 }
 
-// Validate validates the configuration
+// Validate проверяет валидность конфигурации
 func (c *AppConfig) Validate() error {
 	if c.Server.Port <= 0 || c.Server.Port > 65535 {
-		return fmt.Errorf("invalid server port: %d", c.Server.Port)
+		return fmt.Errorf("неверный порт сервера: %d", c.Server.Port)
 	}
 
 	return nil

@@ -6,7 +6,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// Config represents the service configuration stored in MongoDB
+// Config — конфигурация сервиса, хранящаяся в MongoDB
 type Config struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id,omitempty"`
 	Version   int                `bson:"version" json:"version"`
@@ -17,7 +17,7 @@ type Config struct {
 	UpdatedAt time.Time          `bson:"updated_at" json:"updated_at"`
 }
 
-// MQTTConfig holds EMQX/MQTT connection settings
+// MQTTConfig — настройки подключения к EMQX/MQTT брокеру
 type MQTTConfig struct {
 	Broker      string   `bson:"broker" json:"broker" validate:"required"`
 	Port        int      `bson:"port" json:"port" validate:"required,min=1,max=65535"`
@@ -27,38 +27,38 @@ type MQTTConfig struct {
 	Topics      []string `bson:"topics" json:"topics" validate:"required,min=1"`
 	QoS         int      `bson:"qos" json:"qos" validate:"min=0,max=2"`
 	CleanStart  bool     `bson:"clean_start" json:"clean_start"`
-	KeepAlive   int      `bson:"keep_alive" json:"keep_alive"` // seconds
+	KeepAlive   int      `bson:"keep_alive" json:"keep_alive"` // секунды
 	UseTLS      bool     `bson:"use_tls" json:"use_tls"`
 	TLSCertPath string   `bson:"tls_cert_path,omitempty" json:"tls_cert_path,omitempty"`
 	TLSKeyPath  string   `bson:"tls_key_path,omitempty" json:"tls_key_path,omitempty"`
 	TLSCAPath   string   `bson:"tls_ca_path,omitempty" json:"tls_ca_path,omitempty"`
 }
 
-// QuestDBConfig holds QuestDB connection settings
+// QuestDBConfig — настройки подключения к QuestDB
 type QuestDBConfig struct {
 	Host          string `bson:"host" json:"host" validate:"required"`
-	ILPPort       int    `bson:"ilp_port" json:"ilp_port" validate:"required"` // InfluxDB Line Protocol port (9009)
-	HTTPPort      int    `bson:"http_port" json:"http_port"`                   // HTTP port for health checks (9000)
+	ILPPort       int    `bson:"ilp_port" json:"ilp_port" validate:"required"` // порт InfluxDB Line Protocol (9009)
+	HTTPPort      int    `bson:"http_port" json:"http_port"`                   // HTTP порт для health-проверок (9000)
 	TableName     string `bson:"table_name" json:"table_name" validate:"required"`
-	FlushInterval int    `bson:"flush_interval" json:"flush_interval"` // milliseconds
+	FlushInterval int    `bson:"flush_interval" json:"flush_interval"` // миллисекунды
 	BatchSize     int    `bson:"batch_size" json:"batch_size"`
 	UseTLS        bool   `bson:"use_tls" json:"use_tls"`
 	AuthToken     string `bson:"auth_token,omitempty" json:"auth_token,omitempty"`
 }
 
-// PipelineConfig holds data processing settings
+// PipelineConfig — настройки обработки данных
 type PipelineConfig struct {
 	BufferSize      int           `bson:"buffer_size" json:"buffer_size"`
 	Workers         int           `bson:"workers" json:"workers"`
 	RetryAttempts   int           `bson:"retry_attempts" json:"retry_attempts"`
-	RetryDelay      int           `bson:"retry_delay" json:"retry_delay"` // milliseconds
+	RetryDelay      int           `bson:"retry_delay" json:"retry_delay"` // миллисекунды
 	MessageFormat   string        `bson:"message_format" json:"message_format"` // json, msgpack, protobuf
 	TimestampField  string        `bson:"timestamp_field" json:"timestamp_field"`
 	SymbolField     string        `bson:"symbol_field" json:"symbol_field"`
 	FieldMappings   []FieldMap    `bson:"field_mappings" json:"field_mappings"`
 }
 
-// FieldMap defines how to map incoming message fields to QuestDB columns
+// FieldMap — определяет маппинг полей входящего сообщения на колонки QuestDB
 type FieldMap struct {
 	Source      string `bson:"source" json:"source" validate:"required"`
 	Target      string `bson:"target" json:"target" validate:"required"`
@@ -67,14 +67,14 @@ type FieldMap struct {
 	DefaultVal  string `bson:"default_val,omitempty" json:"default_val,omitempty"`
 }
 
-// ConfigUpdate represents a partial config update request
+// ConfigUpdate — запрос на частичное обновление конфигурации
 type ConfigUpdate struct {
 	MQTT     *MQTTConfig     `json:"mqtt,omitempty"`
 	QuestDB  *QuestDBConfig  `json:"questdb,omitempty"`
 	Pipeline *PipelineConfig `json:"pipeline,omitempty"`
 }
 
-// DefaultConfig returns a default configuration
+// DefaultConfig возвращает конфигурацию по умолчанию
 func DefaultConfig() *Config {
 	return &Config{
 		Version: 1,

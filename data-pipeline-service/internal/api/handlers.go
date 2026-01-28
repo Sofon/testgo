@@ -8,12 +8,12 @@ import (
 	"github.com/sofon/data-pipeline-service/internal/models"
 )
 
-// Handler holds dependencies for HTTP handlers
+// Handler — содержит зависимости для HTTP обработчиков
 type Handler struct {
 	service ServiceInterface
 }
 
-// ServiceInterface defines methods that the service must implement for the API
+// ServiceInterface — определяет методы, которые должен реализовать сервис для API
 type ServiceInterface interface {
 	GetConfig() (*models.Config, error)
 	UpdateConfig(update *models.ConfigUpdate) (*models.Config, error)
@@ -22,25 +22,25 @@ type ServiceInterface interface {
 	Reload() error
 }
 
-// NewHandler creates a new Handler instance
+// NewHandler создаёт новый экземпляр Handler
 func NewHandler(service ServiceInterface) *Handler {
 	return &Handler{
 		service: service,
 	}
 }
 
-// GetConfig handles GET /api/v1/config
+// GetConfig обрабатывает GET /api/v1/config
 func (h *Handler) GetConfig(c *gin.Context) {
 	config, err := h.service.GetConfig()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "failed to get config",
+			"error":   "ошибка получения конфига",
 			"details": err.Error(),
 		})
 		return
 	}
 
-	// Mask sensitive fields
+	// Маскируем чувствительные поля
 	configResponse := *config
 	if configResponse.MQTT.Password != "" {
 		configResponse.MQTT.Password = "********"
@@ -52,12 +52,12 @@ func (h *Handler) GetConfig(c *gin.Context) {
 	c.JSON(http.StatusOK, configResponse)
 }
 
-// UpdateConfig handles PUT /api/v1/config
+// UpdateConfig обрабатывает PUT /api/v1/config
 func (h *Handler) UpdateConfig(c *gin.Context) {
 	var update models.ConfigUpdate
 	if err := c.ShouldBindJSON(&update); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid request body",
+			"error":   "неверное тело запроса",
 			"details": err.Error(),
 		})
 		return
@@ -66,24 +66,24 @@ func (h *Handler) UpdateConfig(c *gin.Context) {
 	config, err := h.service.UpdateConfig(&update)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "failed to update config",
+			"error":   "ошибка обновления конфига",
 			"details": err.Error(),
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "config updated successfully",
+		"message": "конфиг успешно обновлён",
 		"version": config.Version,
 	})
 }
 
-// PatchConfig handles PATCH /api/v1/config - partial update
+// PatchConfig обрабатывает PATCH /api/v1/config — частичное обновление
 func (h *Handler) PatchConfig(c *gin.Context) {
 	var update models.ConfigUpdate
 	if err := c.ShouldBindJSON(&update); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "invalid request body",
+			"error":   "неверное тело запроса",
 			"details": err.Error(),
 		})
 		return
@@ -92,25 +92,25 @@ func (h *Handler) PatchConfig(c *gin.Context) {
 	config, err := h.service.UpdateConfig(&update)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "failed to update config",
+			"error":   "ошибка обновления конфига",
 			"details": err.Error(),
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "config patched successfully",
+		"message": "конфиг успешно обновлён",
 		"version": config.Version,
 	})
 }
 
-// GetStatus handles GET /api/v1/status
+// GetStatus обрабатывает GET /api/v1/status
 func (h *Handler) GetStatus(c *gin.Context) {
 	status := h.service.GetStatus()
 	c.JSON(http.StatusOK, status)
 }
 
-// HealthCheck handles GET /health
+// HealthCheck обрабатывает GET /health
 func (h *Handler) HealthCheck(c *gin.Context) {
 	healthy := h.service.IsHealthy()
 
@@ -127,7 +127,7 @@ func (h *Handler) HealthCheck(c *gin.Context) {
 	})
 }
 
-// ReadinessCheck handles GET /ready
+// ReadinessCheck обрабатывает GET /ready
 func (h *Handler) ReadinessCheck(c *gin.Context) {
 	healthy := h.service.IsHealthy()
 
@@ -143,24 +143,24 @@ func (h *Handler) ReadinessCheck(c *gin.Context) {
 	})
 }
 
-// LivenessCheck handles GET /live
+// LivenessCheck обрабатывает GET /live
 func (h *Handler) LivenessCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status": "alive",
 	})
 }
 
-// Reload handles POST /api/v1/reload - triggers config reload
+// Reload обрабатывает POST /api/v1/reload — перезагрузка конфигурации
 func (h *Handler) Reload(c *gin.Context) {
 	if err := h.service.Reload(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "failed to reload",
+			"error":   "ошибка перезагрузки",
 			"details": err.Error(),
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "service reloaded successfully",
+		"message": "сервис успешно перезагружен",
 	})
 }

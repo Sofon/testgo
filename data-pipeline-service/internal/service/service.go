@@ -16,13 +16,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// Version information (set at build time)
+// Информация о версии (устанавливается при сборке)
 var (
 	Version   = "dev"
 	BuildTime = "unknown"
 )
 
-// Service is the main data pipeline service
+// Service — основной сервис обработки данных
 type Service struct {
 	storage       *storage.HybridStorage
 	mqttClient    *mqtt.Client
@@ -40,7 +40,7 @@ type Service struct {
 	activeWorkers   atomic.Int32
 }
 
-// NewService creates a new data pipeline service
+// NewService создаёт новый сервис обработки данных
 func NewService(store *storage.HybridStorage) *Service {
 	return &Service{
 		storage:  store,
@@ -48,67 +48,67 @@ func NewService(store *storage.HybridStorage) *Service {
 	}
 }
 
-// Start initializes and starts the service
+// Start инициализирует и запускает сервис
 func (s *Service) Start(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Load configuration
+	// Загружаем конфигурацию
 	config, err := s.storage.GetConfig(ctx)
 	if err != nil {
 		if err == storage.ErrConfigNotFound {
-			// Create default config
+			// Создаём конфигурацию по умолчанию
 			config = models.DefaultConfig()
 			if err := s.storage.SaveConfig(ctx, config); err != nil {
-				return fmt.Errorf("failed to save default config: %w", err)
+				return fmt.Errorf("ошибка сохранения конфига по умолчанию: %w", err)
 			}
-			logger.Info("created default configuration")
+			logger.Info("создана конфигурация по умолчанию")
 		} else {
-			return fmt.Errorf("failed to load config: %w", err)
+			return fmt.Errorf("ошибка загрузки конфига: %w", err)
 		}
 	}
 	s.config = config
 
-	// Initialize buffer
+	// Инициализируем буфер
 	bufferSize := config.Pipeline.BufferSize
 	if bufferSize <= 0 {
 		bufferSize = 10000
 	}
 	s.bufferChan = make(chan *models.IncomingMessage, bufferSize)
 
-	// Initialize workers
+	// Инициализируем воркеры
 	s.workers = config.Pipeline.Workers
 	if s.workers <= 0 {
 		s.workers = 4
 	}
 
-	// Initialize QuestDB writer
+	// Инициализируем QuestDB writer
 	s.questdbWriter, err = questdb.NewWriter(&config.QuestDB)
 	if err != nil {
-		return fmt.Errorf("failed to create QuestDB writer: %w", err)
+		return fmt.Errorf("ошибка создания QuestDB writer: %w", err)
 	}
 
 	if err := s.questdbWriter.Connect(ctx); err != nil {
-		return fmt.Errorf("failed to connect to QuestDB: %w", err)
+		return fmt.Errorf("ошибка подключения к QuestDB: %w", err)
 	}
 
-	// Initialize MQTT client
+	// Инициализируем MQTT клиент
 	s.mqttClient, err = mqtt.NewClient(&config.MQTT, s.handleMessage)
 	if err != nil {
-		return fmt.Errorf("failed to create MQTT client: %w", err)
+		return fmt.Errorf("ошибка создания MQTT клиента: %w", err)
 	}
 
 	if err := s.mqttClient.Connect(ctx); err != nil {
-		return fmt.Errorf("failed to connect to MQTT: %w", err)
+		return fmt.Errorf("ошибка подключения к MQTT: %w", err)
 	}
 
-	// Start worker goroutines
+	// Запускаем горутины воркеров
 	s.startWorkers()
 
 	s.running.Store(true)
 	s.startedAt = time.Now()
 
-	logger.Info("service started",
+	logger.Info("сервис запущен",
 		zap.Int("workers", s.workers),
 		zap.Int("buffer_size", bufferSize),
 	)
@@ -126,14 +126,14 @@ func (s *Service) worker(id int) {
 	s.activeWorkers.Add(1)
 	defer s.activeWorkers.Add(-1)
 
-	logger.Debug("worker started", zap.Int("worker_id", id))
+	logger.Debug("воркер запущен", zap.Int("worker_id", id))
 
 	for {
 		select {
 		case msg := <-s.bufferChan:
 			s.processMessage(msg)
 		case <-s.stopChan:
-			logger.Debug("worker stopped", zap.Int("worker_id", id))
+			logger.Debug("воркер остановлен", zap.Int("worker_id", id))
 			return
 		}
 	}
@@ -142,11 +142,11 @@ func (s *Service) worker(id int) {
 func (s *Service) handleMessage(msg *models.IncomingMessage) {
 	select {
 	case s.bufferChan <- msg:
-		// Message queued successfully
+		// Сообщение успешно добавлено в очередь
 	default:
-		// Buffer full, drop message
+		// Буфер полон, сбрасываем сообщение
 		s.failedMsgs.Add(1)
-		logger.Warn("message buffer full, dropping message",
+		logger.Warn("буфер сообщений полон, сообщение сброшено",
 			zap.String("topic", msg.Topic),
 		)
 	}
@@ -157,12 +157,12 @@ func (s *Service) processMessage(msg *models.IncomingMessage) {
 	config := s.config
 	s.mu.RUnlock()
 
-	// Parse message if not already parsed
+	// Парсим сообщение если ещё не распарсено
 	if msg.ParsedData == nil {
 		var data map[string]interface{}
 		if err := json.Unmarshal(msg.Payload, &data); err != nil {
 			s.failedMsgs.Add(1)
-			logger.Warn("failed to parse message",
+			logger.Warn("ошибка парсинга сообщения",
 				zap.String("topic", msg.Topic),
 				zap.Error(err),
 			)
@@ -171,7 +171,7 @@ func (s *Service) processMessage(msg *models.IncomingMessage) {
 		msg.ParsedData = data
 	}
 
-	// Write to QuestDB
+	// Записываем в QuestDB
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -186,12 +186,12 @@ func (s *Service) processMessage(msg *models.IncomingMessage) {
 
 	if err != nil {
 		s.failedMsgs.Add(1)
-		logger.Warn("failed to write to QuestDB",
+		logger.Warn("ошибка записи в QuestDB",
 			zap.String("topic", msg.Topic),
 			zap.Error(err),
 		)
 
-		// Retry logic
+		// Логика повторных попыток
 		for i := 0; i < config.Pipeline.RetryAttempts; i++ {
 			time.Sleep(time.Duration(config.Pipeline.RetryDelay) * time.Millisecond)
 
@@ -216,7 +216,7 @@ func (s *Service) processMessage(msg *models.IncomingMessage) {
 	s.processedMsgs.Add(1)
 }
 
-// Stop gracefully stops the service
+// Stop выполняет graceful остановку сервиса
 func (s *Service) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -225,30 +225,30 @@ func (s *Service) Stop(ctx context.Context) error {
 		return nil
 	}
 
-	logger.Info("stopping service...")
+	logger.Info("остановка сервиса...")
 
-	// Signal workers to stop
+	// Сигнализируем воркерам об остановке
 	close(s.stopChan)
 
-	// Disconnect MQTT
+	// Отключаем MQTT
 	if s.mqttClient != nil {
 		s.mqttClient.Disconnect()
 	}
 
-	// Close QuestDB connection
+	// Закрываем соединение с QuestDB
 	if s.questdbWriter != nil {
 		if err := s.questdbWriter.Close(ctx); err != nil {
-			logger.Warn("error closing QuestDB connection", zap.Error(err))
+			logger.Warn("ошибка закрытия соединения с QuestDB", zap.Error(err))
 		}
 	}
 
 	s.running.Store(false)
-	logger.Info("service stopped")
+	logger.Info("сервис остановлен")
 
 	return nil
 }
 
-// GetConfig returns the current configuration
+// GetConfig возвращает текущую конфигурацию
 func (s *Service) GetConfig() (*models.Config, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -260,7 +260,7 @@ func (s *Service) GetConfig() (*models.Config, error) {
 	return s.storage.GetConfig(context.Background())
 }
 
-// UpdateConfig updates the service configuration
+// UpdateConfig обновляет конфигурацию сервиса
 func (s *Service) UpdateConfig(update *models.ConfigUpdate) (*models.Config, error) {
 	ctx := context.Background()
 
@@ -273,12 +273,12 @@ func (s *Service) UpdateConfig(update *models.ConfigUpdate) (*models.Config, err
 	s.config = config
 	s.mu.Unlock()
 
-	logger.Info("config updated", zap.Int("version", config.Version))
+	logger.Info("конфиг обновлён", zap.Int("version", config.Version))
 
 	return config, nil
 }
 
-// GetStatus returns the current service status
+// GetStatus возвращает текущий статус сервиса
 func (s *Service) GetStatus() *models.ServiceStatus {
 	s.mu.RLock()
 	config := s.config
@@ -296,17 +296,17 @@ func (s *Service) GetStatus() *models.ServiceStatus {
 		status.Uptime = time.Since(s.startedAt).String()
 	}
 
-	// MQTT status
+	// Статус MQTT
 	if s.mqttClient != nil {
 		status.MQTT = s.mqttClient.GetStatus()
 	}
 
-	// QuestDB status
+	// Статус QuestDB
 	if s.questdbWriter != nil {
 		status.QuestDB = s.questdbWriter.GetStatus()
 	}
 
-	// MongoDB status
+	// Статус MongoDB
 	status.MongoDB = models.MongoDBStatus{
 		Connected: s.storage.IsMongoConnected(),
 	}
@@ -314,7 +314,7 @@ func (s *Service) GetStatus() *models.ServiceStatus {
 	status.MongoDB.Host = host
 	status.MongoDB.Database = db
 
-	// Pipeline status
+	// Статус пайплайна
 	bufferCap := 0
 	if config != nil {
 		bufferCap = config.Pipeline.BufferSize
@@ -337,18 +337,18 @@ func (s *Service) GetStatus() *models.ServiceStatus {
 	return status
 }
 
-// IsHealthy returns whether the service is healthy
+// IsHealthy возвращает здоровье сервиса
 func (s *Service) IsHealthy() bool {
 	if !s.running.Load() {
 		return false
 	}
 
-	// Check MQTT connection
+	// Проверяем подключение к MQTT
 	if s.mqttClient != nil && !s.mqttClient.IsConnected() {
 		return false
 	}
 
-	// Check QuestDB connection
+	// Проверяем подключение к QuestDB
 	if s.questdbWriter != nil && !s.questdbWriter.IsConnected() {
 		return false
 	}
@@ -356,28 +356,28 @@ func (s *Service) IsHealthy() bool {
 	return true
 }
 
-// Reload reloads the service configuration and reconnects
+// Reload перезагружает конфигурацию сервиса и переподключается
 func (s *Service) Reload() error {
 	ctx := context.Background()
 
-	// Load fresh config
+	// Загружаем свежий конфиг
 	config, err := s.storage.GetConfig(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return fmt.Errorf("ошибка загрузки конфига: %w", err)
 	}
 
 	s.mu.Lock()
 	s.config = config
 	s.mu.Unlock()
 
-	// Update MQTT client
+	// Обновляем MQTT клиент
 	if s.mqttClient != nil {
 		if err := s.mqttClient.UpdateConfig(ctx, &config.MQTT); err != nil {
-			logger.Warn("failed to reload MQTT config", zap.Error(err))
+			logger.Warn("ошибка перезагрузки конфига MQTT", zap.Error(err))
 		}
 	}
 
-	logger.Info("service reloaded", zap.Int("config_version", config.Version))
+	logger.Info("сервис перезагружен", zap.Int("config_version", config.Version))
 
 	return nil
 }
