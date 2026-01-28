@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sofon/data-pipeline-service/internal/eventbus"
 	"github.com/sofon/data-pipeline-service/internal/models"
 	"github.com/sofon/data-pipeline-service/internal/mqtt"
 	"github.com/sofon/data-pipeline-service/internal/questdb"
@@ -27,10 +28,13 @@ type Service struct {
 	storage       *storage.HybridStorage
 	mqttClient    *mqtt.Client
 	questdbWriter *questdb.Writer
-	config        *models.Config
+	eventBus      *eventbus.EventBus    // шина событий
+	fileConfig    *models.FileConfig    // конфиг из файла (подключения)
+	serviceConfig *models.ServiceConfig // конфиг из MongoDB (параметры обработки)
 
 	mu              sync.RWMutex
 	running         atomic.Bool
+	lastStatus      string // для отслеживания изменения статуса
 	startedAt       time.Time
 	processedMsgs   atomic.Int64
 	failedMsgs      atomic.Int64
@@ -41,10 +45,12 @@ type Service struct {
 }
 
 // NewService создаёт новый сервис обработки данных
-func NewService(store *storage.HybridStorage) *Service {
+func NewService(store *storage.HybridStorage, fileConfig *models.FileConfig) *Service {
 	return &Service{
-		storage:  store,
-		stopChan: make(chan struct{}),
+		storage:    store,
+		fileConfig: fileConfig,
+		stopChan:   make(chan struct{}),
+		lastStatus: "stopped",
 	}
 }
 
@@ -53,37 +59,45 @@ func (s *Service) Start(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Загружаем конфигурацию
-	config, err := s.storage.GetConfig(ctx)
+	oldStatus := s.lastStatus
+
+	// Загружаем ServiceConfig из MongoDB
+	serviceConfig, err := s.storage.GetServiceConfig(ctx)
 	if err != nil {
 		if err == storage.ErrConfigNotFound {
 			// Создаём конфигурацию по умолчанию
-			config = models.DefaultConfig()
-			if err := s.storage.SaveConfig(ctx, config); err != nil {
+			serviceConfig = models.DefaultServiceConfig()
+			if err := s.storage.SaveServiceConfig(ctx, serviceConfig); err != nil {
 				return fmt.Errorf("ошибка сохранения конфига по умолчанию: %w", err)
 			}
-			logger.Info("создана конфигурация по умолчанию")
+			logger.Info("создана ServiceConfig по умолчанию")
 		} else {
-			return fmt.Errorf("ошибка загрузки конфига: %w", err)
+			return fmt.Errorf("ошибка загрузки ServiceConfig: %w", err)
 		}
 	}
-	s.config = config
+	s.serviceConfig = serviceConfig
 
 	// Инициализируем буфер
-	bufferSize := config.Pipeline.BufferSize
+	bufferSize := s.fileConfig.Pipeline.BufferSize
 	if bufferSize <= 0 {
 		bufferSize = 10000
 	}
 	s.bufferChan = make(chan *models.IncomingMessage, bufferSize)
 
 	// Инициализируем воркеры
-	s.workers = config.Pipeline.Workers
+	s.workers = s.fileConfig.Pipeline.Workers
 	if s.workers <= 0 {
 		s.workers = 4
 	}
 
-	// Инициализируем QuestDB writer
-	s.questdbWriter, err = questdb.NewWriter(&config.QuestDB)
+	// Инициализируем QuestDB writer с параметрами из ServiceConfig
+	writerConfig := &questdb.WriterConfig{
+		Connection:    &s.fileConfig.QuestDB,
+		BatchSize:     serviceConfig.BatchSize,
+		FlushInterval: serviceConfig.FlushInterval,
+		WriteTimeout:  serviceConfig.WriteTimeout,
+	}
+	s.questdbWriter, err = questdb.NewWriter(writerConfig)
 	if err != nil {
 		return fmt.Errorf("ошибка создания QuestDB writer: %w", err)
 	}
@@ -92,8 +106,8 @@ func (s *Service) Start(ctx context.Context) error {
 		return fmt.Errorf("ошибка подключения к QuestDB: %w", err)
 	}
 
-	// Инициализируем MQTT клиент
-	s.mqttClient, err = mqtt.NewClient(&config.MQTT, s.handleMessage)
+	// Инициализируем MQTT клиент для данных
+	s.mqttClient, err = mqtt.NewClient(&s.fileConfig.MQTT, s.handleMessage)
 	if err != nil {
 		return fmt.Errorf("ошибка создания MQTT клиента: %w", err)
 	}
@@ -102,16 +116,30 @@ func (s *Service) Start(ctx context.Context) error {
 		return fmt.Errorf("ошибка подключения к MQTT: %w", err)
 	}
 
+	// Инициализируем EventBus (шина событий)
+	s.eventBus, err = eventbus.NewEventBus(&s.fileConfig.EventBus)
+	if err != nil {
+		logger.Warn("не удалось создать EventBus", zap.Error(err))
+	} else {
+		if err := s.eventBus.Connect(ctx); err != nil {
+			logger.Warn("не удалось подключиться к EventBus", zap.Error(err))
+		}
+	}
+
 	// Запускаем горутины воркеров
 	s.startWorkers()
 
 	s.running.Store(true)
 	s.startedAt = time.Now()
+	s.lastStatus = "running"
 
 	logger.Info("сервис запущен",
 		zap.Int("workers", s.workers),
 		zap.Int("buffer_size", bufferSize),
 	)
+
+	// Публикуем событие изменения статуса
+	s.publishStatusChange(ctx, oldStatus, "running", "service_started", "сервис успешно запущен")
 
 	return nil
 }
@@ -154,7 +182,8 @@ func (s *Service) handleMessage(msg *models.IncomingMessage) {
 
 func (s *Service) processMessage(msg *models.IncomingMessage) {
 	s.mu.RLock()
-	config := s.config
+	serviceConfig := s.serviceConfig
+	fileConfig := s.fileConfig
 	s.mu.RUnlock()
 
 	// Парсим сообщение если ещё не распарсено
@@ -171,17 +200,27 @@ func (s *Service) processMessage(msg *models.IncomingMessage) {
 		msg.ParsedData = data
 	}
 
+	// Определяем таблицу по маппингу topic -> table
+	tableName := s.getTableForTopic(msg.Topic, serviceConfig.StreamMapping)
+	if tableName == "" {
+		s.failedMsgs.Add(1)
+		logger.Warn("не найден маппинг для топика",
+			zap.String("topic", msg.Topic),
+		)
+		return
+	}
+
 	// Записываем в QuestDB
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(serviceConfig.WriteTimeout)*time.Millisecond)
 	defer cancel()
 
 	err := s.questdbWriter.WriteRow(
 		ctx,
 		msg.ParsedData,
-		config.Pipeline.FieldMappings,
-		config.QuestDB.TableName,
-		config.Pipeline.TimestampField,
-		config.Pipeline.SymbolField,
+		fileConfig.Pipeline.FieldMappings,
+		tableName,
+		fileConfig.Pipeline.TimestampField,
+		fileConfig.Pipeline.SymbolField,
 	)
 
 	if err != nil {
@@ -192,16 +231,16 @@ func (s *Service) processMessage(msg *models.IncomingMessage) {
 		)
 
 		// Логика повторных попыток
-		for i := 0; i < config.Pipeline.RetryAttempts; i++ {
-			time.Sleep(time.Duration(config.Pipeline.RetryDelay) * time.Millisecond)
+		for i := 0; i < fileConfig.Pipeline.RetryAttempts; i++ {
+			time.Sleep(time.Duration(fileConfig.Pipeline.RetryDelay) * time.Millisecond)
 
 			err = s.questdbWriter.WriteRow(
 				ctx,
 				msg.ParsedData,
-				config.Pipeline.FieldMappings,
-				config.QuestDB.TableName,
-				config.Pipeline.TimestampField,
-				config.Pipeline.SymbolField,
+				fileConfig.Pipeline.FieldMappings,
+				tableName,
+				fileConfig.Pipeline.TimestampField,
+				fileConfig.Pipeline.SymbolField,
 			)
 			if err == nil {
 				break
@@ -216,6 +255,33 @@ func (s *Service) processMessage(msg *models.IncomingMessage) {
 	s.processedMsgs.Add(1)
 }
 
+// getTableForTopic определяет таблицу QuestDB по топику используя маппинг
+func (s *Service) getTableForTopic(topic string, mapping map[string]string) string {
+	// Сначала точное совпадение
+	if table, ok := mapping[topic]; ok {
+		return table
+	}
+
+	// Проверяем wildcard совпадения (простой вариант с # в конце)
+	for pattern, table := range mapping {
+		if matchTopicPattern(pattern, topic) {
+			return table
+		}
+	}
+
+	return ""
+}
+
+// matchTopicPattern проверяет соответствие топика паттерну MQTT
+func matchTopicPattern(pattern, topic string) bool {
+	// Простая реализация: поддержка # в конце паттерна
+	if len(pattern) > 0 && pattern[len(pattern)-1] == '#' {
+		prefix := pattern[:len(pattern)-1]
+		return len(topic) >= len(prefix) && topic[:len(prefix)] == prefix
+	}
+	return pattern == topic
+}
+
 // Stop выполняет graceful остановку сервиса
 func (s *Service) Stop(ctx context.Context) error {
 	s.mu.Lock()
@@ -225,6 +291,7 @@ func (s *Service) Stop(ctx context.Context) error {
 		return nil
 	}
 
+	oldStatus := s.lastStatus
 	logger.Info("остановка сервиса...")
 
 	// Сигнализируем воркерам об остановке
@@ -235,6 +302,11 @@ func (s *Service) Stop(ctx context.Context) error {
 		s.mqttClient.Disconnect()
 	}
 
+	// Отключаем EventBus
+	if s.eventBus != nil {
+		s.eventBus.Disconnect()
+	}
+
 	// Закрываем соединение с QuestDB
 	if s.questdbWriter != nil {
 		if err := s.questdbWriter.Close(ctx); err != nil {
@@ -243,37 +315,62 @@ func (s *Service) Stop(ctx context.Context) error {
 	}
 
 	s.running.Store(false)
+	s.lastStatus = "stopped"
 	logger.Info("сервис остановлен")
+
+	// Публикуем событие изменения статуса (EventBus уже отключён, но попробуем)
+	s.publishStatusChange(ctx, oldStatus, "stopped", "service_stopped", "сервис остановлен")
 
 	return nil
 }
 
-// GetConfig возвращает текущую конфигурацию
-func (s *Service) GetConfig() (*models.Config, error) {
+// GetServiceConfig возвращает текущую ServiceConfig
+func (s *Service) GetServiceConfig() (*models.ServiceConfig, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	if s.config != nil {
-		return s.config, nil
+	if s.serviceConfig != nil {
+		return s.serviceConfig, nil
 	}
 
-	return s.storage.GetConfig(context.Background())
+	return s.storage.GetServiceConfig(context.Background())
 }
 
-// UpdateConfig обновляет конфигурацию сервиса
-func (s *Service) UpdateConfig(update *models.ConfigUpdate) (*models.Config, error) {
+// GetFileConfig возвращает текущую конфигурацию из файла
+func (s *Service) GetFileConfig() *models.FileConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fileConfig
+}
+
+// UpdateServiceConfig обновляет ServiceConfig сервиса
+func (s *Service) UpdateServiceConfig(update *models.ServiceConfigUpdate) (*models.ServiceConfig, error) {
 	ctx := context.Background()
 
-	config, err := s.storage.UpdateConfig(ctx, update)
+	config, err := s.storage.UpdateServiceConfig(ctx, update)
 	if err != nil {
+		// Публикуем событие о неудачном обновлении
+		if s.eventBus != nil {
+			s.eventBus.PublishConfigUpdateFailed(ctx, err.Error(), "UPDATE_FAILED", "api")
+		}
 		return nil, err
 	}
 
 	s.mu.Lock()
-	s.config = config
+	s.serviceConfig = config
 	s.mu.Unlock()
 
-	logger.Info("конфиг обновлён", zap.Int("version", config.Version))
+	// Обновляем параметры QuestDB writer
+	if s.questdbWriter != nil {
+		s.questdbWriter.UpdateConfig(config.BatchSize, config.FlushInterval, config.WriteTimeout)
+	}
+
+	logger.Info("ServiceConfig обновлён", zap.Int("version", config.Version))
+
+	// Публикуем событие об успешном обновлении
+	if s.eventBus != nil {
+		s.eventBus.PublishConfigUpdated(ctx, config, "api")
+	}
 
 	return config, nil
 }
@@ -281,7 +378,7 @@ func (s *Service) UpdateConfig(update *models.ConfigUpdate) (*models.Config, err
 // GetStatus возвращает текущий статус сервиса
 func (s *Service) GetStatus() *models.ServiceStatus {
 	s.mu.RLock()
-	config := s.config
+	fileConfig := s.fileConfig
 	s.mu.RUnlock()
 
 	status := &models.ServiceStatus{
@@ -314,10 +411,15 @@ func (s *Service) GetStatus() *models.ServiceStatus {
 	status.MongoDB.Host = host
 	status.MongoDB.Database = db
 
+	// Статус EventBus
+	if s.eventBus != nil {
+		status.EventBus = s.eventBus.GetStatus()
+	}
+
 	// Статус пайплайна
 	bufferCap := 0
-	if config != nil {
-		bufferCap = config.Pipeline.BufferSize
+	if fileConfig != nil {
+		bufferCap = fileConfig.Pipeline.BufferSize
 	}
 	bufferLen := len(s.bufferChan)
 	bufferUsage := 0
@@ -356,28 +458,44 @@ func (s *Service) IsHealthy() bool {
 	return true
 }
 
-// Reload перезагружает конфигурацию сервиса и переподключается
+// Reload перезагружает ServiceConfig из MongoDB
 func (s *Service) Reload() error {
 	ctx := context.Background()
 
-	// Загружаем свежий конфиг
-	config, err := s.storage.GetConfig(ctx)
+	// Загружаем свежий ServiceConfig
+	config, err := s.storage.GetServiceConfig(ctx)
 	if err != nil {
-		return fmt.Errorf("ошибка загрузки конфига: %w", err)
+		if s.eventBus != nil {
+			s.eventBus.PublishConfigUpdateFailed(ctx, err.Error(), "RELOAD_FAILED", "reload")
+		}
+		return fmt.Errorf("ошибка загрузки ServiceConfig: %w", err)
 	}
 
 	s.mu.Lock()
-	s.config = config
+	oldConfig := s.serviceConfig
+	s.serviceConfig = config
 	s.mu.Unlock()
 
-	// Обновляем MQTT клиент
-	if s.mqttClient != nil {
-		if err := s.mqttClient.UpdateConfig(ctx, &config.MQTT); err != nil {
-			logger.Warn("ошибка перезагрузки конфига MQTT", zap.Error(err))
-		}
+	// Обновляем параметры QuestDB writer
+	if s.questdbWriter != nil {
+		s.questdbWriter.UpdateConfig(config.BatchSize, config.FlushInterval, config.WriteTimeout)
 	}
 
-	logger.Info("сервис перезагружен", zap.Int("config_version", config.Version))
+	logger.Info("ServiceConfig перезагружен", zap.Int("config_version", config.Version))
+
+	// Публикуем событие об обновлении если версия изменилась
+	if s.eventBus != nil && (oldConfig == nil || oldConfig.Version != config.Version) {
+		s.eventBus.PublishConfigUpdated(ctx, config, "reload")
+	}
 
 	return nil
+}
+
+// publishStatusChange публикует событие изменения статуса
+func (s *Service) publishStatusChange(ctx context.Context, oldStatus, newStatus, reason, details string) {
+	if s.eventBus != nil && oldStatus != newStatus {
+		if err := s.eventBus.PublishStatusChanged(ctx, oldStatus, newStatus, reason, details); err != nil {
+			logger.Warn("не удалось опубликовать событие статуса", zap.Error(err))
+		}
+	}
 }

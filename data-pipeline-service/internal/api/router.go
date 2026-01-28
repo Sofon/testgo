@@ -70,15 +70,16 @@ func (s *Server) setupRoutes() {
 	v1 := s.router.Group("/api/v1")
 	{
 		// Эндпоинты конфигурации
-		v1.GET("/config", s.handler.GetConfig)
-		v1.PUT("/config", s.handler.UpdateConfig)
-		v1.PATCH("/config", s.handler.PatchConfig)
+		v1.GET("/config", s.handler.GetConfig)                 // полный конфиг (ServiceConfig + FileConfig)
+		v1.GET("/config/service", s.handler.GetServiceConfig)  // только ServiceConfig из MongoDB
+		v1.PUT("/config", s.handler.UpdateConfig)              // обновить ServiceConfig
+		v1.PATCH("/config", s.handler.PatchConfig)             // частично обновить ServiceConfig
 
 		// Эндпоинт статуса
 		v1.GET("/status", s.handler.GetStatus)
 
 		// Эндпоинты управления
-		v1.POST("/reload", s.handler.Reload)
+		v1.POST("/reload", s.handler.Reload) // перезагрузить ServiceConfig из MongoDB
 	}
 }
 

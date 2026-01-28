@@ -20,7 +20,7 @@ var (
 	ErrNoConnection   = errors.New("нет подключения к базе данных")
 )
 
-// MongoStorage — хранилище конфигурации в MongoDB
+// MongoStorage — хранилище ServiceConfig в MongoDB
 type MongoStorage struct {
 	client     *mongo.Client
 	database   *mongo.Database
@@ -52,7 +52,7 @@ func NewMongoStorage(cfg *MongoConfig) (*MongoStorage, error) {
 		cfg.Database = "data_pipeline"
 	}
 	if cfg.Collection == "" {
-		cfg.Collection = "config"
+		cfg.Collection = "service_config"
 	}
 	if cfg.ConnectTimeout == 0 {
 		cfg.ConnectTimeout = 10
@@ -146,8 +146,8 @@ func (s *MongoStorage) IsConnected() bool {
 	return s.connected
 }
 
-// GetConfig получает последнюю версию конфигурации
-func (s *MongoStorage) GetConfig(ctx context.Context) (*models.Config, error) {
+// GetServiceConfig получает последнюю версию ServiceConfig
+func (s *MongoStorage) GetServiceConfig(ctx context.Context) (*models.ServiceConfig, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -157,7 +157,7 @@ func (s *MongoStorage) GetConfig(ctx context.Context) (*models.Config, error) {
 
 	opts := options.FindOne().SetSort(bson.D{{Key: "version", Value: -1}})
 
-	var config models.Config
+	var config models.ServiceConfig
 	err := s.collection.FindOne(ctx, bson.M{}, opts).Decode(&config)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
@@ -169,8 +169,8 @@ func (s *MongoStorage) GetConfig(ctx context.Context) (*models.Config, error) {
 	return &config, nil
 }
 
-// SaveConfig сохраняет новую версию конфигурации
-func (s *MongoStorage) SaveConfig(ctx context.Context, config *models.Config) error {
+// SaveServiceConfig сохраняет новую версию ServiceConfig
+func (s *MongoStorage) SaveServiceConfig(ctx context.Context, config *models.ServiceConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -200,12 +200,12 @@ func (s *MongoStorage) SaveConfig(ctx context.Context, config *models.Config) er
 		return fmt.Errorf("ошибка сохранения конфига: %w", err)
 	}
 
-	logger.Info("конфиг сохранён", zap.Int("version", config.Version))
+	logger.Info("ServiceConfig сохранён", zap.Int("version", config.Version))
 	return nil
 }
 
-// UpdateConfig обновляет отдельные поля конфигурации
-func (s *MongoStorage) UpdateConfig(ctx context.Context, update *models.ConfigUpdate) (*models.Config, error) {
+// UpdateServiceConfig обновляет отдельные поля ServiceConfig
+func (s *MongoStorage) UpdateServiceConfig(ctx context.Context, update *models.ServiceConfigUpdate) (*models.ServiceConfig, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -218,21 +218,24 @@ func (s *MongoStorage) UpdateConfig(ctx context.Context, update *models.ConfigUp
 	if err != nil {
 		if errors.Is(err, ErrConfigNotFound) {
 			// Создаём конфиг по умолчанию если его нет
-			currentConfig = models.DefaultConfig()
+			currentConfig = models.DefaultServiceConfig()
 		} else {
 			return nil, fmt.Errorf("ошибка получения текущего конфига: %w", err)
 		}
 	}
 
 	// Применяем обновления
-	if update.MQTT != nil {
-		currentConfig.MQTT = *update.MQTT
+	if update.BatchSize != nil {
+		currentConfig.BatchSize = *update.BatchSize
 	}
-	if update.QuestDB != nil {
-		currentConfig.QuestDB = *update.QuestDB
+	if update.FlushInterval != nil {
+		currentConfig.FlushInterval = *update.FlushInterval
 	}
-	if update.Pipeline != nil {
-		currentConfig.Pipeline = *update.Pipeline
+	if update.WriteTimeout != nil {
+		currentConfig.WriteTimeout = *update.WriteTimeout
+	}
+	if update.StreamMapping != nil {
+		currentConfig.StreamMapping = *update.StreamMapping
 	}
 
 	currentConfig.Version++
@@ -245,14 +248,14 @@ func (s *MongoStorage) UpdateConfig(ctx context.Context, update *models.ConfigUp
 		return nil, fmt.Errorf("ошибка сохранения обновлённого конфига: %w", err)
 	}
 
-	logger.Info("конфиг обновлён", zap.Int("version", currentConfig.Version))
+	logger.Info("ServiceConfig обновлён", zap.Int("version", currentConfig.Version))
 	return currentConfig, nil
 }
 
-func (s *MongoStorage) getLatestConfigUnsafe(ctx context.Context) (*models.Config, error) {
+func (s *MongoStorage) getLatestConfigUnsafe(ctx context.Context) (*models.ServiceConfig, error) {
 	opts := options.FindOne().SetSort(bson.D{{Key: "version", Value: -1}})
 
-	var config models.Config
+	var config models.ServiceConfig
 	err := s.collection.FindOne(ctx, bson.M{}, opts).Decode(&config)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
@@ -264,8 +267,8 @@ func (s *MongoStorage) getLatestConfigUnsafe(ctx context.Context) (*models.Confi
 	return &config, nil
 }
 
-// GetConfigHistory получает историю изменений конфигурации
-func (s *MongoStorage) GetConfigHistory(ctx context.Context, limit int) ([]*models.Config, error) {
+// GetConfigHistory получает историю изменений ServiceConfig
+func (s *MongoStorage) GetConfigHistory(ctx context.Context, limit int) ([]*models.ServiceConfig, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -287,7 +290,7 @@ func (s *MongoStorage) GetConfigHistory(ctx context.Context, limit int) ([]*mode
 	}
 	defer cursor.Close(ctx)
 
-	var configs []*models.Config
+	var configs []*models.ServiceConfig
 	if err := cursor.All(ctx, &configs); err != nil {
 		return nil, fmt.Errorf("ошибка декодирования истории конфига: %w", err)
 	}

@@ -10,6 +10,7 @@ type ServiceStatus struct {
 	MQTT        MQTTStatus        `json:"mqtt"`
 	QuestDB     QuestDBStatus     `json:"questdb"`
 	MongoDB     MongoDBStatus     `json:"mongodb"`
+	EventBus    EventBusStatus    `json:"event_bus"`
 	Pipeline    PipelineStatus    `json:"pipeline"`
 	Version     string            `json:"version"`
 	BuildTime   string            `json:"build_time,omitempty"`
@@ -41,6 +42,14 @@ type MongoDBStatus struct {
 	Connected bool   `json:"connected"`
 	Host      string `json:"host"`
 	Database  string `json:"database"`
+}
+
+// EventBusStatus — статус подключения к шине событий
+type EventBusStatus struct {
+	Enabled     bool   `json:"enabled"`
+	Connected   bool   `json:"connected"`
+	Broker      string `json:"broker,omitempty"`
+	TopicPrefix string `json:"topic_prefix,omitempty"`
 }
 
 // PipelineStatus — статус пайплайна обработки данных

@@ -9,14 +9,14 @@ import (
 	"go.uber.org/zap"
 )
 
-// ConfigStorage — интерфейс для хранилища конфигурации
-type ConfigStorage interface {
-	GetConfig(ctx context.Context) (*models.Config, error)
-	SaveConfig(ctx context.Context, config *models.Config) error
-	UpdateConfig(ctx context.Context, update *models.ConfigUpdate) (*models.Config, error)
+// ServiceConfigStorage — интерфейс для хранилища ServiceConfig
+type ServiceConfigStorage interface {
+	GetServiceConfig(ctx context.Context) (*models.ServiceConfig, error)
+	SaveServiceConfig(ctx context.Context, config *models.ServiceConfig) error
+	UpdateServiceConfig(ctx context.Context, update *models.ServiceConfigUpdate) (*models.ServiceConfig, error)
 }
 
-// HybridStorage — гибридное хранилище с MongoDB и файловым fallback.
+// HybridStorage — гибридное хранилище ServiceConfig с MongoDB и файловым fallback.
 // Использует MongoDB как основное хранилище и переключается на файловое,
 // если MongoDB недоступен. Это гарантирует, что конфигурация не потеряется.
 type HybridStorage struct {
@@ -25,7 +25,7 @@ type HybridStorage struct {
 }
 
 // NewHybridStorage создаёт гибридное хранилище с MongoDB и файловым fallback
-func NewHybridStorage(mongoCfg *MongoConfig, fileCfg *FileConfig) (*HybridStorage, error) {
+func NewHybridStorage(mongoCfg *MongoConfig, fileCfg *FileStorageConfig) (*HybridStorage, error) {
 	mongo, err := NewMongoStorage(mongoCfg)
 	if err != nil {
 		return nil, err
@@ -66,7 +66,7 @@ func (s *HybridStorage) syncFileToMongo(ctx context.Context) error {
 		return nil
 	}
 
-	fileConfig, err := s.file.GetConfig(ctx)
+	fileConfig, err := s.file.GetServiceConfig(ctx)
 	if err != nil {
 		if errors.Is(err, ErrConfigNotFound) {
 			return nil // Нет файлового конфига для синхронизации
@@ -74,7 +74,7 @@ func (s *HybridStorage) syncFileToMongo(ctx context.Context) error {
 		return err
 	}
 
-	mongoConfig, err := s.mongo.GetConfig(ctx)
+	mongoConfig, err := s.mongo.GetServiceConfig(ctx)
 	if err != nil && !errors.Is(err, ErrConfigNotFound) {
 		return err
 	}
@@ -84,7 +84,7 @@ func (s *HybridStorage) syncFileToMongo(ctx context.Context) error {
 		logger.Info("синхронизация файлового конфига в MongoDB",
 			zap.Int("file_version", fileConfig.Version),
 		)
-		return s.mongo.SaveConfig(ctx, fileConfig)
+		return s.mongo.SaveServiceConfig(ctx, fileConfig)
 	}
 
 	return nil
@@ -95,10 +95,10 @@ func (s *HybridStorage) Disconnect(ctx context.Context) error {
 	return s.mongo.Disconnect(ctx)
 }
 
-// GetConfig получает конфигурацию, сначала пробуя MongoDB, затем файл
-func (s *HybridStorage) GetConfig(ctx context.Context) (*models.Config, error) {
+// GetServiceConfig получает ServiceConfig, сначала пробуя MongoDB, затем файл
+func (s *HybridStorage) GetServiceConfig(ctx context.Context) (*models.ServiceConfig, error) {
 	if s.mongo.IsConnected() {
-		config, err := s.mongo.GetConfig(ctx)
+		config, err := s.mongo.GetServiceConfig(ctx)
 		if err == nil {
 			return config, nil
 		}
@@ -107,18 +107,18 @@ func (s *HybridStorage) GetConfig(ctx context.Context) (*models.Config, error) {
 		}
 	}
 
-	return s.file.GetConfig(ctx)
+	return s.file.GetServiceConfig(ctx)
 }
 
-// SaveConfig сохраняет конфигурацию в оба хранилища
-func (s *HybridStorage) SaveConfig(ctx context.Context, config *models.Config) error {
+// SaveServiceConfig сохраняет ServiceConfig в оба хранилища
+func (s *HybridStorage) SaveServiceConfig(ctx context.Context, config *models.ServiceConfig) error {
 	// Всегда сохраняем в файл как резервную копию
-	if err := s.file.SaveConfig(ctx, config); err != nil {
+	if err := s.file.SaveServiceConfig(ctx, config); err != nil {
 		logger.Warn("не удалось сохранить конфиг в файл", zap.Error(err))
 	}
 
 	if s.mongo.IsConnected() {
-		if err := s.mongo.SaveConfig(ctx, config); err != nil {
+		if err := s.mongo.SaveServiceConfig(ctx, config); err != nil {
 			logger.Warn("не удалось сохранить конфиг в MongoDB", zap.Error(err))
 			return nil // Сохранение в файл успешно, не падаем
 		}
@@ -127,18 +127,18 @@ func (s *HybridStorage) SaveConfig(ctx context.Context, config *models.Config) e
 	return nil
 }
 
-// UpdateConfig обновляет конфигурацию в обоих хранилищах
-func (s *HybridStorage) UpdateConfig(ctx context.Context, update *models.ConfigUpdate) (*models.Config, error) {
-	var config *models.Config
+// UpdateServiceConfig обновляет ServiceConfig в обоих хранилищах
+func (s *HybridStorage) UpdateServiceConfig(ctx context.Context, update *models.ServiceConfigUpdate) (*models.ServiceConfig, error) {
+	var config *models.ServiceConfig
 	var err error
 
 	if s.mongo.IsConnected() {
-		config, err = s.mongo.UpdateConfig(ctx, update)
+		config, err = s.mongo.UpdateServiceConfig(ctx, update)
 		if err != nil {
 			logger.Warn("обновление в MongoDB не удалось, переключаемся на файл", zap.Error(err))
 		} else {
 			// Синхронизируем в файл
-			if saveErr := s.file.SaveConfig(ctx, config); saveErr != nil {
+			if saveErr := s.file.SaveServiceConfig(ctx, config); saveErr != nil {
 				logger.Warn("не удалось синхронизировать конфиг в файл", zap.Error(saveErr))
 			}
 			return config, nil
@@ -146,7 +146,7 @@ func (s *HybridStorage) UpdateConfig(ctx context.Context, update *models.ConfigU
 	}
 
 	// Fallback на файл
-	config, err = s.file.UpdateConfig(ctx, update)
+	config, err = s.file.UpdateServiceConfig(ctx, update)
 	if err != nil {
 		return nil, err
 	}
@@ -167,4 +167,12 @@ func (s *HybridStorage) GetMongoInfo() (host, database string) {
 // Ping проверяет подключение к MongoDB
 func (s *HybridStorage) Ping(ctx context.Context) error {
 	return s.mongo.Ping(ctx)
+}
+
+// GetConfigHistory получает историю изменений ServiceConfig
+func (s *HybridStorage) GetConfigHistory(ctx context.Context, limit int) ([]*models.ServiceConfig, error) {
+	if s.mongo.IsConnected() {
+		return s.mongo.GetConfigHistory(ctx, limit)
+	}
+	return nil, ErrNoConnection
 }

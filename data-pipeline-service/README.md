@@ -7,27 +7,56 @@
 ```
 ┌─────────────┐     ┌──────────────────┐     ┌───────────┐
 │    EMQX     │────▶│  Data Pipeline   │────▶│  QuestDB  │
-│   (MQTT)    │     │     Service      │     │  (TSDB)   │
+│ (Data Bus)  │     │     Service      │     │  (TSDB)   │
 └─────────────┘     └──────────────────┘     └───────────┘
                             │
-                            │ config
-                            ▼
-                    ┌──────────────────┐
-                    │     MongoDB      │
-                    │   (+ file        │
-                    │    fallback)     │
-                    └──────────────────┘
+       ┌────────────────────┼────────────────────┐
+       │                    │                    │
+       ▼                    ▼                    ▼
+┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+│   MongoDB    │    │    EMQX      │    │    File      │
+│ (ServiceCfg) │    │ (Event Bus)  │    │  (Fallback)  │
+└──────────────┘    └──────────────┘    └──────────────┘
 ```
 
 ## Возможности
 
-- Подписка на MQTT топики (EMQX)
+- Подписка на MQTT топики (EMQX) для приёма данных
 - Парсинг JSON-сообщений с маппингом полей
 - Запись данных в QuestDB через ILP (InfluxDB Line Protocol)
-- Хранение конфигурации в MongoDB с файловым fallback
+- **Разделённая конфигурация**:
+  - `ServiceConfig` (batch_size, flush_interval, stream_mapping) — в MongoDB
+  - Настройки подключений (MQTT, QuestDB, EventBus) — в файле
+- **Event Bus** — публикация событий при изменении конфига и статуса
 - REST API для управления конфигурацией и мониторинга
 - Graceful shutdown
 - Автоматический reconnect при потере соединения
+
+## Структура конфигурации
+
+### ServiceConfig (хранится в MongoDB)
+
+```json
+{
+  "batch_size": 1000,
+  "flush_interval": 1000,
+  "write_timeout": 5000,
+  "stream_mapping": {
+    "sensors/#": "sensor_data",
+    "telemetry/#": "telemetry_data"
+  }
+}
+```
+
+Это единственная часть конфигурации, которая **динамически изменяется** через API и хранится в MongoDB с файловым fallback.
+
+### FileConfig (читается из config.yaml)
+
+Настройки подключений, которые обычно не меняются в runtime:
+- MQTT Data Bus — подключение к шине данных
+- Event Bus — подключение к шине событий
+- QuestDB — подключение к БД
+- Pipeline — параметры обработки (workers, buffer_size, field_mappings)
 
 ## Структура проекта
 
@@ -42,8 +71,11 @@ data-pipeline-service/
 │   │   └── router.go            # HTTP router и middleware
 │   ├── config/
 │   │   └── config.go            # Загрузка конфигурации приложения
+│   ├── eventbus/
+│   │   └── eventbus.go          # Клиент шины событий
 │   ├── models/
-│   │   ├── config.go            # Модели конфигурации пайплайна
+│   │   ├── config.go            # Модели конфигурации
+│   │   ├── events.go            # Модели событий
 │   │   ├── message.go           # Модели сообщений
 │   │   └── status.go            # Модели статуса
 │   ├── mqtt/
@@ -83,14 +115,7 @@ make docker-up
 cd deployments && docker-compose up -d
 ```
 
-### 2. Инициализация конфигурации
-
-```bash
-# Подождите ~10 секунд пока сервисы запустятся
-./scripts/init-config.sh
-```
-
-### 3. Проверка статуса
+### 2. Проверка статуса
 
 ```bash
 curl http://localhost:8080/api/v1/status | jq .
@@ -98,62 +123,22 @@ curl http://localhost:8080/api/v1/status | jq .
 
 ## Конфигурация
 
-### Уровни конфигурации
-
-1. **Конфигурация приложения** (`configs/config.yaml`) — параметры подключения к MongoDB, настройки HTTP-сервера, логирование
-2. **Конфигурация пайплайна** (хранится в MongoDB) — MQTT топики, QuestDB таблицы, маппинг полей
-
 ### Переменные окружения
 
 | Переменная | Описание | По умолчанию |
 |------------|----------|--------------|
 | `SERVER_HOST` | Хост HTTP-сервера | `0.0.0.0` |
 | `SERVER_PORT` | Порт HTTP-сервера | `8080` |
-| `SERVER_MODE` | Режим Gin (debug/release) | `release` |
 | `MONGODB_URI` | URI подключения к MongoDB | `mongodb://localhost:27017` |
 | `MONGODB_DATABASE` | База данных MongoDB | `data_pipeline` |
-| `CONFIG_FILE_PATH` | Путь к файловому fallback | `./config/pipeline-config.json` |
+| `MQTT_BROKER` | MQTT брокер для данных | `localhost` |
+| `MQTT_PORT` | MQTT порт | `1883` |
+| `EVENTBUS_ENABLED` | Включить шину событий | `true` |
+| `EVENTBUS_BROKER` | MQTT брокер для событий | `localhost` |
+| `EVENTBUS_TOPIC_PREFIX` | Префикс топиков событий | `events/data-pipeline` |
+| `QUESTDB_HOST` | Хост QuestDB | `localhost` |
+| `QUESTDB_ILP_PORT` | ILP порт QuestDB | `9009` |
 | `LOG_LEVEL` | Уровень логирования | `info` |
-| `LOG_FORMAT` | Формат логов (json/console) | `json` |
-
-### Конфигурация пайплайна (MongoDB)
-
-```json
-{
-  "mqtt": {
-    "broker": "emqx",
-    "port": 1883,
-    "client_id": "data-pipeline-service",
-    "topics": ["sensors/#", "devices/#"],
-    "qos": 1,
-    "clean_start": true,
-    "keep_alive": 60,
-    "use_tls": false
-  },
-  "questdb": {
-    "host": "questdb",
-    "ilp_port": 9009,
-    "http_port": 9000,
-    "table_name": "sensor_data",
-    "flush_interval": 1000,
-    "batch_size": 1000
-  },
-  "pipeline": {
-    "buffer_size": 10000,
-    "workers": 4,
-    "retry_attempts": 3,
-    "retry_delay": 1000,
-    "message_format": "json",
-    "timestamp_field": "timestamp",
-    "symbol_field": "device_id",
-    "field_mappings": [
-      {"source": "device_id", "target": "device_id", "type": "symbol", "required": true},
-      {"source": "value", "target": "value", "type": "double", "required": true},
-      {"source": "timestamp", "target": "ts", "type": "timestamp", "required": true}
-    ]
-  }
-}
-```
 
 ## REST API
 
@@ -164,11 +149,12 @@ curl http://localhost:8080/api/v1/status | jq .
 | `GET` | `/health` | Health check |
 | `GET` | `/ready` | Readiness probe |
 | `GET` | `/live` | Liveness probe |
-| `GET` | `/api/v1/config` | Получить текущую конфигурацию |
-| `PUT` | `/api/v1/config` | Обновить всю конфигурацию |
-| `PATCH` | `/api/v1/config` | Частично обновить конфигурацию |
+| `GET` | `/api/v1/config` | Получить полную конфигурацию (ServiceConfig + FileConfig) |
+| `GET` | `/api/v1/config/service` | Получить только ServiceConfig из MongoDB |
+| `PUT` | `/api/v1/config` | Обновить ServiceConfig |
+| `PATCH` | `/api/v1/config` | Частично обновить ServiceConfig |
 | `GET` | `/api/v1/status` | Получить статус сервиса |
-| `POST` | `/api/v1/reload` | Перезагрузить конфигурацию |
+| `POST` | `/api/v1/reload` | Перезагрузить ServiceConfig из MongoDB |
 
 ### Примеры
 
@@ -176,22 +162,67 @@ curl http://localhost:8080/api/v1/status | jq .
 # Получить статус
 curl http://localhost:8080/api/v1/status | jq .
 
-# Получить конфигурацию
+# Получить полную конфигурацию
 curl http://localhost:8080/api/v1/config | jq .
 
-# Обновить MQTT топики
+# Получить только ServiceConfig
+curl http://localhost:8080/api/v1/config/service | jq .
+
+# Обновить batch_size
+curl -X PATCH http://localhost:8080/api/v1/config \
+  -H "Content-Type: application/json" \
+  -d '{"batch_size": 2000}'
+
+# Обновить stream_mapping
 curl -X PATCH http://localhost:8080/api/v1/config \
   -H "Content-Type: application/json" \
   -d '{
-    "mqtt": {
-      "broker": "emqx",
-      "port": 1883,
-      "topics": ["sensors/#", "devices/#", "telemetry/#"]
+    "stream_mapping": {
+      "sensors/#": "sensor_data",
+      "telemetry/#": "telemetry_data",
+      "devices/#": "device_data"
     }
   }'
 
-# Перезагрузить сервис
+# Перезагрузить конфиг из MongoDB
 curl -X POST http://localhost:8080/api/v1/reload
+```
+
+## Event Bus
+
+Сервис публикует события в отдельную шину EMQX:
+
+### Типы событий
+
+| Тип | Топик | Описание |
+|-----|-------|----------|
+| `config.updated` | `events/data-pipeline/config.updated` | Конфиг успешно обновлён |
+| `config.update_failed` | `events/data-pipeline/config.update_failed` | Ошибка обновления конфига |
+| `status.changed` | `events/data-pipeline/status.changed` | Статус сервиса изменился |
+
+### Формат события
+
+```json
+{
+  "type": "config.updated",
+  "timestamp": "2024-01-15T10:30:00Z",
+  "source": "data-pipeline-service",
+  "data": {
+    "version": 5,
+    "batch_size": 2000,
+    "flush_interval": 1000,
+    "write_timeout": 5000,
+    "stream_mapping": {...},
+    "updated_by": "api"
+  }
+}
+```
+
+### Подписка на события
+
+```bash
+# Через MQTT CLI
+mosquitto_sub -h localhost -t 'events/data-pipeline/#' -v
 ```
 
 ## Маппинг полей
@@ -207,32 +238,40 @@ curl -X POST http://localhost:8080/api/v1/reload
 | `boolean` | Булево значение |
 | `timestamp` | Временная метка |
 
-Пример маппинга:
+Пример маппинга (в config.yaml):
+
+```yaml
+pipeline:
+  pipeline:
+    field_mappings:
+      - source: "device_id"
+        target: "device_id"
+        type: "symbol"
+        required: true
+      - source: "temperature"
+        target: "temp"
+        type: "double"
+        required: true
+      - source: "timestamp"
+        target: "ts"
+        type: "timestamp"
+        required: true
+```
+
+## Stream Mapping
+
+ServiceConfig содержит `stream_mapping` — маппинг MQTT топиков на таблицы QuestDB:
 
 ```json
 {
-  "field_mappings": [
-    {"source": "device_id", "target": "device_id", "type": "symbol", "required": true},
-    {"source": "temperature", "target": "temp", "type": "double", "required": true},
-    {"source": "humidity", "target": "humidity", "type": "double", "required": false, "default_val": "0"},
-    {"source": "ts", "target": "timestamp", "type": "timestamp", "required": true}
-  ]
+  "stream_mapping": {
+    "sensors/#": "sensor_data",
+    "telemetry/#": "telemetry_data"
+  }
 }
 ```
 
-## Формат входящих сообщений
-
-Ожидаемый JSON-формат:
-
-```json
-{
-  "device_id": "sensor-001",
-  "sensor_type": "temperature",
-  "value": 23.5,
-  "unit": "celsius",
-  "timestamp": 1704067200000
-}
-```
+Поддерживается wildcard `#` в конце паттерна.
 
 ## Мониторинг
 
@@ -250,20 +289,24 @@ curl -X POST http://localhost:8080/api/v1/reload
   "uptime": "1h30m45s",
   "mqtt": {
     "connected": true,
-    "messages_received": 150000,
-    "errors": 0
+    "messages_received": 150000
   },
   "questdb": {
     "connected": true,
-    "rows_written": 149500,
-    "write_errors": 500,
-    "pending_rows": 0
+    "rows_written": 149500
+  },
+  "mongodb": {
+    "connected": true
+  },
+  "event_bus": {
+    "enabled": true,
+    "connected": true,
+    "topic_prefix": "events/data-pipeline"
   },
   "pipeline": {
     "running": true,
     "buffer_usage": 5,
     "processed_messages": 149500,
-    "failed_messages": 500,
     "active_workers": 4
   }
 }
@@ -284,37 +327,48 @@ make dev
 # Запустить тесты
 make test
 
-# Запустить линтер
-make lint
-
 # Собрать Docker образ
 make docker-build
 ```
 
 ## Хранение конфигурации
 
-Конфигурация хранится в **MongoDB** с автоматическим **файловым fallback**:
+### ServiceConfig (MongoDB + File fallback)
 
-1. При старте сервис пытается подключиться к MongoDB
+ServiceConfig хранится в MongoDB с файловым fallback:
+
+1. При старте сервис подключается к MongoDB
 2. Если MongoDB недоступен — используется файловый storage
 3. При восстановлении MongoDB — данные синхронизируются
 4. Каждое обновление сохраняется в обоих местах
 
-Это гарантирует, что конфигурация не потеряется при сбоях MongoDB.
+### FileConfig (только файл)
+
+Настройки подключений читаются из `config.yaml` при старте и не меняются в runtime.
 
 ## Что менять
 
-### Добавить новый MQTT топик
-1. `PATCH /api/v1/config` с обновленным списком `topics`
-2. Или отредактировать в MongoDB напрямую
+### Изменить batch_size, flush_interval или write_timeout
+```bash
+curl -X PATCH http://localhost:8080/api/v1/config \
+  -H "Content-Type: application/json" \
+  -d '{"batch_size": 2000, "flush_interval": 500}'
+```
 
-### Изменить таблицу QuestDB
-1. `PATCH /api/v1/config` с новым `table_name`
-2. Таблица создастся автоматически при первой записи
+### Добавить новый маппинг topic → table
+```bash
+curl -X PATCH http://localhost:8080/api/v1/config \
+  -H "Content-Type: application/json" \
+  -d '{
+    "stream_mapping": {
+      "sensors/#": "sensor_data",
+      "devices/#": "device_data"
+    }
+  }'
+```
 
-### Добавить новое поле
-1. Добавить маппинг в `field_mappings` через API
-2. Поле появится в QuestDB автоматически
+### Изменить параметры подключения (MQTT, QuestDB)
+Отредактировать `configs/config.yaml`, перезапустить сервис.
 
-### Изменить параметры подключения
-Отредактировать `configs/config.yaml` или переменные окружения, перезапустить сервис.
+### Добавить новое поле в маппинг
+Отредактировать `configs/config.yaml` раздел `field_mappings`, перезапустить сервис.

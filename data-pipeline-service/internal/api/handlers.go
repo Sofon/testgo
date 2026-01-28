@@ -15,8 +15,9 @@ type Handler struct {
 
 // ServiceInterface — определяет методы, которые должен реализовать сервис для API
 type ServiceInterface interface {
-	GetConfig() (*models.Config, error)
-	UpdateConfig(update *models.ConfigUpdate) (*models.Config, error)
+	GetServiceConfig() (*models.ServiceConfig, error)
+	GetFileConfig() *models.FileConfig
+	UpdateServiceConfig(update *models.ServiceConfigUpdate) (*models.ServiceConfig, error)
 	GetStatus() *models.ServiceStatus
 	IsHealthy() bool
 	Reload() error
@@ -29,58 +30,60 @@ func NewHandler(service ServiceInterface) *Handler {
 	}
 }
 
-// GetConfig обрабатывает GET /api/v1/config
-func (h *Handler) GetConfig(c *gin.Context) {
-	config, err := h.service.GetConfig()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "ошибка получения конфига",
-			"details": err.Error(),
-		})
-		return
-	}
-
-	// Маскируем чувствительные поля
-	configResponse := *config
-	if configResponse.MQTT.Password != "" {
-		configResponse.MQTT.Password = "********"
-	}
-	if configResponse.QuestDB.AuthToken != "" {
-		configResponse.QuestDB.AuthToken = "********"
-	}
-
-	c.JSON(http.StatusOK, configResponse)
+// ConfigResponse — ответ с полной конфигурацией
+type ConfigResponse struct {
+	ServiceConfig *models.ServiceConfig `json:"service_config"` // из MongoDB
+	FileConfig    *models.FileConfig    `json:"file_config"`    // из файла
 }
 
-// UpdateConfig обрабатывает PUT /api/v1/config
-func (h *Handler) UpdateConfig(c *gin.Context) {
-	var update models.ConfigUpdate
-	if err := c.ShouldBindJSON(&update); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":   "неверное тело запроса",
-			"details": err.Error(),
-		})
-		return
-	}
-
-	config, err := h.service.UpdateConfig(&update)
+// GetConfig обрабатывает GET /api/v1/config
+func (h *Handler) GetConfig(c *gin.Context) {
+	serviceConfig, err := h.service.GetServiceConfig()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "ошибка обновления конфига",
+			"error":   "ошибка получения ServiceConfig",
 			"details": err.Error(),
 		})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "конфиг успешно обновлён",
-		"version": config.Version,
+	fileConfig := h.service.GetFileConfig()
+
+	// Маскируем чувствительные поля
+	maskedFileConfig := *fileConfig
+	if maskedFileConfig.MQTT.Password != "" {
+		maskedFileConfig.MQTT.Password = "********"
+	}
+	if maskedFileConfig.EventBus.Password != "" {
+		maskedFileConfig.EventBus.Password = "********"
+	}
+	if maskedFileConfig.QuestDB.AuthToken != "" {
+		maskedFileConfig.QuestDB.AuthToken = "********"
+	}
+
+	c.JSON(http.StatusOK, ConfigResponse{
+		ServiceConfig: serviceConfig,
+		FileConfig:    &maskedFileConfig,
 	})
 }
 
-// PatchConfig обрабатывает PATCH /api/v1/config — частичное обновление
-func (h *Handler) PatchConfig(c *gin.Context) {
-	var update models.ConfigUpdate
+// GetServiceConfig обрабатывает GET /api/v1/config/service — только ServiceConfig из MongoDB
+func (h *Handler) GetServiceConfig(c *gin.Context) {
+	config, err := h.service.GetServiceConfig()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "ошибка получения ServiceConfig",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, config)
+}
+
+// UpdateConfig обрабатывает PUT /api/v1/config — обновление ServiceConfig
+func (h *Handler) UpdateConfig(c *gin.Context) {
+	var update models.ServiceConfigUpdate
 	if err := c.ShouldBindJSON(&update); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":   "неверное тело запроса",
@@ -89,7 +92,7 @@ func (h *Handler) PatchConfig(c *gin.Context) {
 		return
 	}
 
-	config, err := h.service.UpdateConfig(&update)
+	config, err := h.service.UpdateServiceConfig(&update)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "ошибка обновления конфига",
@@ -99,8 +102,36 @@ func (h *Handler) PatchConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "конфиг успешно обновлён",
+		"message": "ServiceConfig успешно обновлён",
 		"version": config.Version,
+		"config":  config,
+	})
+}
+
+// PatchConfig обрабатывает PATCH /api/v1/config — частичное обновление ServiceConfig
+func (h *Handler) PatchConfig(c *gin.Context) {
+	var update models.ServiceConfigUpdate
+	if err := c.ShouldBindJSON(&update); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":   "неверное тело запроса",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	config, err := h.service.UpdateServiceConfig(&update)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "ошибка обновления конфига",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "ServiceConfig успешно обновлён",
+		"version": config.Version,
+		"config":  config,
 	})
 }
 
@@ -150,7 +181,7 @@ func (h *Handler) LivenessCheck(c *gin.Context) {
 	})
 }
 
-// Reload обрабатывает POST /api/v1/reload — перезагрузка конфигурации
+// Reload обрабатывает POST /api/v1/reload — перезагрузка ServiceConfig из MongoDB
 func (h *Handler) Reload(c *gin.Context) {
 	if err := h.service.Reload(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -161,6 +192,6 @@ func (h *Handler) Reload(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "сервис успешно перезагружен",
+		"message": "ServiceConfig успешно перезагружен",
 	})
 }

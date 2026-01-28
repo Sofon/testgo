@@ -15,21 +15,21 @@ import (
 	"go.uber.org/zap"
 )
 
-// FileStorage — файловое хранилище конфигурации (fallback)
+// FileStorage — файловое хранилище ServiceConfig (fallback для MongoDB)
 type FileStorage struct {
 	filePath string
 	mu       sync.RWMutex
 }
 
-// FileConfig — настройки файлового хранилища
-type FileConfig struct {
+// FileStorageConfig — настройки файлового хранилища ServiceConfig
+type FileStorageConfig struct {
 	Path string `json:"path" yaml:"path"`
 }
 
-// NewFileStorage создаёт новое файловое хранилище
-func NewFileStorage(cfg *FileConfig) (*FileStorage, error) {
+// NewFileStorage создаёт новое файловое хранилище для ServiceConfig
+func NewFileStorage(cfg *FileStorageConfig) (*FileStorage, error) {
 	if cfg == nil || cfg.Path == "" {
-		cfg = &FileConfig{Path: "./config/pipeline-config.json"}
+		cfg = &FileStorageConfig{Path: "./config/service-config.json"}
 	}
 
 	// Создаём директорию если не существует
@@ -43,8 +43,8 @@ func NewFileStorage(cfg *FileConfig) (*FileStorage, error) {
 	}, nil
 }
 
-// GetConfig читает конфигурацию из файла
-func (s *FileStorage) GetConfig(ctx context.Context) (*models.Config, error) {
+// GetServiceConfig читает ServiceConfig из файла
+func (s *FileStorage) GetServiceConfig(ctx context.Context) (*models.ServiceConfig, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -56,7 +56,7 @@ func (s *FileStorage) GetConfig(ctx context.Context) (*models.Config, error) {
 		return nil, fmt.Errorf("ошибка чтения файла конфига: %w", err)
 	}
 
-	var config models.Config
+	var config models.ServiceConfig
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, fmt.Errorf("ошибка парсинга файла конфига: %w", err)
 	}
@@ -64,8 +64,8 @@ func (s *FileStorage) GetConfig(ctx context.Context) (*models.Config, error) {
 	return &config, nil
 }
 
-// SaveConfig записывает конфигурацию в файл
-func (s *FileStorage) SaveConfig(ctx context.Context, config *models.Config) error {
+// SaveServiceConfig записывает ServiceConfig в файл
+func (s *FileStorage) SaveServiceConfig(ctx context.Context, config *models.ServiceConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -76,7 +76,7 @@ func (s *FileStorage) SaveConfig(ctx context.Context, config *models.Config) err
 
 	// Читаем текущую версию если файл существует
 	if data, err := os.ReadFile(s.filePath); err == nil {
-		var current models.Config
+		var current models.ServiceConfig
 		if json.Unmarshal(data, &current) == nil {
 			config.Version = current.Version + 1
 		}
@@ -101,7 +101,7 @@ func (s *FileStorage) SaveConfig(ctx context.Context, config *models.Config) err
 		return fmt.Errorf("ошибка переименования файла конфига: %w", err)
 	}
 
-	logger.Info("конфиг сохранён в файл",
+	logger.Info("ServiceConfig сохранён в файл",
 		zap.String("path", s.filePath),
 		zap.Int("version", config.Version),
 	)
@@ -109,37 +109,40 @@ func (s *FileStorage) SaveConfig(ctx context.Context, config *models.Config) err
 	return nil
 }
 
-// UpdateConfig обновляет отдельные поля конфигурации
-func (s *FileStorage) UpdateConfig(ctx context.Context, update *models.ConfigUpdate) (*models.Config, error) {
+// UpdateServiceConfig обновляет отдельные поля ServiceConfig в файле
+func (s *FileStorage) UpdateServiceConfig(ctx context.Context, update *models.ServiceConfigUpdate) (*models.ServiceConfig, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Читаем текущий конфиг
-	var config *models.Config
+	var config *models.ServiceConfig
 
 	data, err := os.ReadFile(s.filePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			config = models.DefaultConfig()
+			config = models.DefaultServiceConfig()
 		} else {
 			return nil, fmt.Errorf("ошибка чтения файла конфига: %w", err)
 		}
 	} else {
-		config = &models.Config{}
+		config = &models.ServiceConfig{}
 		if err := json.Unmarshal(data, config); err != nil {
 			return nil, fmt.Errorf("ошибка парсинга файла конфига: %w", err)
 		}
 	}
 
 	// Применяем обновления
-	if update.MQTT != nil {
-		config.MQTT = *update.MQTT
+	if update.BatchSize != nil {
+		config.BatchSize = *update.BatchSize
 	}
-	if update.QuestDB != nil {
-		config.QuestDB = *update.QuestDB
+	if update.FlushInterval != nil {
+		config.FlushInterval = *update.FlushInterval
 	}
-	if update.Pipeline != nil {
-		config.Pipeline = *update.Pipeline
+	if update.WriteTimeout != nil {
+		config.WriteTimeout = *update.WriteTimeout
+	}
+	if update.StreamMapping != nil {
+		config.StreamMapping = *update.StreamMapping
 	}
 
 	config.Version++
@@ -161,7 +164,7 @@ func (s *FileStorage) UpdateConfig(ctx context.Context, update *models.ConfigUpd
 		return nil, fmt.Errorf("ошибка переименования файла конфига: %w", err)
 	}
 
-	logger.Info("конфиг обновлён в файле",
+	logger.Info("ServiceConfig обновлён в файле",
 		zap.String("path", s.filePath),
 		zap.Int("version", config.Version),
 	)

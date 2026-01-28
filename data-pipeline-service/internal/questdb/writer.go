@@ -17,7 +17,10 @@ import (
 // Writer — обработчик записи данных в QuestDB
 type Writer struct {
 	sender        *qdb.LineSender
-	config        *models.QuestDBConfig
+	connConfig    *models.QuestDBConfig // настройки подключения из файла
+	batchSize     int                   // из ServiceConfig (MongoDB)
+	flushInterval int                   // из ServiceConfig (MongoDB)
+	writeTimeout  int                   // из ServiceConfig (MongoDB)
 	mu            sync.RWMutex
 	connected     atomic.Bool
 	rowsWritten   atomic.Int64
@@ -28,15 +31,26 @@ type Writer struct {
 	stopChan      chan struct{}
 }
 
+// WriterConfig — комбинированная конфигурация для Writer
+type WriterConfig struct {
+	Connection    *models.QuestDBConfig // из файла
+	BatchSize     int                   // из ServiceConfig (MongoDB)
+	FlushInterval int                   // из ServiceConfig (MongoDB)
+	WriteTimeout  int                   // из ServiceConfig (MongoDB)
+}
+
 // NewWriter создаёт новый QuestDB writer
-func NewWriter(config *models.QuestDBConfig) (*Writer, error) {
-	if config == nil {
+func NewWriter(config *WriterConfig) (*Writer, error) {
+	if config == nil || config.Connection == nil {
 		return nil, fmt.Errorf("требуется конфигурация QuestDB")
 	}
 
 	return &Writer{
-		config:   config,
-		stopChan: make(chan struct{}),
+		connConfig:    config.Connection,
+		batchSize:     config.BatchSize,
+		flushInterval: config.FlushInterval,
+		writeTimeout:  config.WriteTimeout,
+		stopChan:      make(chan struct{}),
 	}, nil
 }
 
@@ -45,18 +59,18 @@ func (w *Writer) Connect(ctx context.Context) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	address := fmt.Sprintf("%s:%d", w.config.Host, w.config.ILPPort)
+	address := fmt.Sprintf("%s:%d", w.connConfig.Host, w.connConfig.ILPPort)
 
 	opts := []qdb.LineSenderOption{
 		qdb.WithAddress(address),
 	}
 
-	if w.config.UseTLS {
+	if w.connConfig.UseTLS {
 		opts = append(opts, qdb.WithTls())
 	}
 
-	if w.config.AuthToken != "" {
-		opts = append(opts, qdb.WithAuth(w.config.AuthToken, w.config.AuthToken))
+	if w.connConfig.AuthToken != "" {
+		opts = append(opts, qdb.WithAuth(w.connConfig.AuthToken, w.connConfig.AuthToken))
 	}
 
 	sender, err := qdb.NewLineSender(ctx, opts...)
@@ -68,8 +82,8 @@ func (w *Writer) Connect(ctx context.Context) error {
 	w.connected.Store(true)
 
 	logger.Info("подключено к QuestDB",
-		zap.String("host", w.config.Host),
-		zap.Int("port", w.config.ILPPort),
+		zap.String("host", w.connConfig.Host),
+		zap.Int("port", w.connConfig.ILPPort),
 	)
 
 	// Запускаем горутину авто-flush
@@ -78,12 +92,33 @@ func (w *Writer) Connect(ctx context.Context) error {
 	return nil
 }
 
+// UpdateConfig обновляет параметры из ServiceConfig (batch_size, flush_interval, write_timeout)
+func (w *Writer) UpdateConfig(batchSize, flushInterval, writeTimeout int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.batchSize = batchSize
+	w.flushInterval = flushInterval
+	w.writeTimeout = writeTimeout
+
+	// Перезапускаем авто-flush с новым интервалом если нужно
+	if w.flushTicker != nil {
+		w.flushTicker.Reset(time.Duration(flushInterval) * time.Millisecond)
+	}
+
+	logger.Info("QuestDB writer конфиг обновлён",
+		zap.Int("batch_size", batchSize),
+		zap.Int("flush_interval", flushInterval),
+		zap.Int("write_timeout", writeTimeout),
+	)
+}
+
 func (w *Writer) startAutoFlush() {
-	if w.config.FlushInterval <= 0 {
+	if w.flushInterval <= 0 {
 		return
 	}
 
-	w.flushTicker = time.NewTicker(time.Duration(w.config.FlushInterval) * time.Millisecond)
+	w.flushTicker = time.NewTicker(time.Duration(w.flushInterval) * time.Millisecond)
 
 	go func() {
 		for {
@@ -111,7 +146,7 @@ func (w *Writer) Write(ctx context.Context, row *models.QuestDBRow) error {
 
 	tableName := row.TableName
 	if tableName == "" {
-		tableName = w.config.TableName
+		return fmt.Errorf("не указано имя таблицы")
 	}
 
 	// Начинаем построение строки
@@ -158,7 +193,7 @@ func (w *Writer) Write(ctx context.Context, row *models.QuestDBRow) error {
 	w.pendingRows.Add(1)
 
 	// Авто-flush при достижении размера батча
-	if w.config.BatchSize > 0 && w.pendingRows.Load() >= int64(w.config.BatchSize) {
+	if w.batchSize > 0 && w.pendingRows.Load() >= int64(w.batchSize) {
 		return w.flushUnsafe(ctx)
 	}
 
@@ -361,8 +396,7 @@ func (w *Writer) IsConnected() bool {
 func (w *Writer) GetStatus() models.QuestDBStatus {
 	status := models.QuestDBStatus{
 		Connected:   w.connected.Load(),
-		Host:        fmt.Sprintf("%s:%d", w.config.Host, w.config.ILPPort),
-		TableName:   w.config.TableName,
+		Host:        fmt.Sprintf("%s:%d", w.connConfig.Host, w.connConfig.ILPPort),
 		RowsWritten: w.rowsWritten.Load(),
 		WriteErrors: w.writeErrors.Load(),
 		PendingRows: w.pendingRows.Load(),
@@ -377,11 +411,11 @@ func (w *Writer) GetStatus() models.QuestDBStatus {
 
 // HealthCheck выполняет проверку здоровья QuestDB
 func (w *Writer) HealthCheck(ctx context.Context) error {
-	if w.config.HTTPPort == 0 {
+	if w.connConfig.HTTPPort == 0 {
 		return nil
 	}
 
-	url := fmt.Sprintf("http://%s:%d/exec?query=select+1", w.config.Host, w.config.HTTPPort)
+	url := fmt.Sprintf("http://%s:%d/exec?query=select+1", w.connConfig.Host, w.connConfig.HTTPPort)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

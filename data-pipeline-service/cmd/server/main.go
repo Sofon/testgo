@@ -21,7 +21,7 @@ func main() {
 	configPath := flag.String("config", "", "Путь к файлу конфигурации")
 	flag.Parse()
 
-	// Загружаем конфигурацию приложения
+	// Загружаем конфигурацию приложения из файла
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		panic("ошибка загрузки конфига: " + err.Error())
@@ -46,7 +46,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Инициализируем хранилище
+	// Инициализируем хранилище для ServiceConfig (MongoDB + файловый fallback)
 	store, err := storage.NewHybridStorage(&cfg.MongoDB, &cfg.File)
 	if err != nil {
 		logger.Fatal("ошибка создания хранилища", zap.Error(err))
@@ -58,8 +58,9 @@ func main() {
 	}
 	defer store.Disconnect(context.Background())
 
-	// Создаём сервис
-	svc := service.NewService(store)
+	// Создаём сервис с конфигурацией из файла (MQTT, QuestDB, EventBus, Pipeline)
+	// ServiceConfig (batch_size, flush_interval, write_timeout, stream_mapping) загружается из MongoDB
+	svc := service.NewService(store, &cfg.Pipeline)
 
 	// Запускаем сервис
 	if err := svc.Start(ctx); err != nil {
