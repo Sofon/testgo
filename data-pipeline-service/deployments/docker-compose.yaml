@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # Data Pipeline Service
+  data-pipeline:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        VERSION: "1.0.0"
+        BUILD_TIME: "${BUILD_TIME:-unknown}"
+    container_name: data-pipeline-service
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8080
+      - SERVER_MODE=release
+      - MONGODB_URI=mongodb://mongodb:27017
+      - MONGODB_DATABASE=data_pipeline
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+    depends_on:
+      - mongodb
+      - emqx
+      - questdb
+    networks:
+      - pipeline-network
+    volumes:
+      - ./config:/app/config
+
+  # MongoDB for configuration storage
+  mongodb:
+    image: mongo:7.0
+    container_name: pipeline-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - pipeline-network
+
+  # EMQX MQTT Broker
+  emqx:
+    image: emqx/emqx:5.4.0
+    container_name: pipeline-emqx
+    restart: unless-stopped
+    ports:
+      - "1883:1883"    # MQTT
+      - "8083:8083"    # MQTT over WebSocket
+      - "8084:8084"    # MQTT over WebSocket (TLS)
+      - "8883:8883"    # MQTT (TLS)
+      - "18083:18083"  # Dashboard
+    environment:
+      - EMQX_NAME=emqx
+      - EMQX_HOST=127.0.0.1
+    volumes:
+      - emqx_data:/opt/emqx/data
+      - emqx_log:/opt/emqx/log
+    networks:
+      - pipeline-network
+
+  # QuestDB for time-series data storage
+  questdb:
+    image: questdb/questdb:7.4.0
+    container_name: pipeline-questdb
+    restart: unless-stopped
+    ports:
+      - "9000:9000"    # HTTP API & Web Console
+      - "9009:9009"    # InfluxDB Line Protocol (ILP)
+      - "8812:8812"    # PostgreSQL wire protocol
+    volumes:
+      - questdb_data:/var/lib/questdb
+    environment:
+      - QDB_HTTP_ENABLED=true
+      - QDB_PG_ENABLED=true
+      - QDB_LINE_TCP_ENABLED=true
+    networks:
+      - pipeline-network
+
+networks:
+  pipeline-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+  emqx_data:
+  emqx_log:
+  questdb_data:

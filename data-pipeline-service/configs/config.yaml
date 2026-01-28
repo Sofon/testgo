@@ -1,0 +1,26 @@
+# Data Pipeline Service Configuration
+# This file contains application-level settings (connections, server params)
+# The pipeline configuration (MQTT topics, QuestDB tables, field mappings) is stored in MongoDB
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  read_timeout: 30    # seconds
+  write_timeout: 30   # seconds
+  mode: "release"     # debug, release, test
+
+mongodb:
+  uri: "mongodb://localhost:27017"
+  database: "data_pipeline"
+  collection: "config"
+  connect_timeout: 10  # seconds
+  max_pool_size: 10
+
+# Fallback file storage (used when MongoDB is unavailable)
+file:
+  path: "./config/pipeline-config.json"
+
+logger:
+  level: "info"       # debug, info, warn, error
+  format: "json"      # json, console
+  output_path: ""     # empty for stdout
